@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- zemin çizgisi -->
+    <path android:fillColor="#FFFFFF" android:pathData="M30,76h48v4h-48z" />
+    <!-- bina -->
+    <path android:fillColor="#FFFFFF" android:pathData="M36,76V50h14v26z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M53,76V40h18v36z" />
+    <path android:fillColor="#1F2937" android:pathData="M57,45h4v4h-4zM63,45h4v4h-4zM57,53h4v4h-4zM63,53h4v4h-4zM57,61h4v4h-4zM63,61h4v4h-4zM40,55h6v4h-6zM40,63h6v4h-6z" />
+    <!-- vinç -->
+    <path android:fillColor="#F2B705" android:pathData="M44,30h3v20h-3z" />
+    <path android:fillColor="#F2B705" android:pathData="M34,28h40v3h-40z" />
+    <path android:fillColor="#F2B705" android:pathData="M70,31h1.5v10h-1.5z" />
+    <path android:fillColor="#F2B705" android:pathData="M68,41h5.5v3h-5.5z" />
+</vector>
