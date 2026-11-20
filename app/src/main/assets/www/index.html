@@ -441,10 +441,13 @@ function cashCheck(S, j, f) {
   S.active.forEach(a => {
     const p = projectJob(S, a);
     if (a.tur === 'saha') diger += p.iscilik;
-    if (p.saat / HOURS_PER_DAY <= gun) gelecek += a.teklif - a.avans - p.ceza + (a.teminatTutar || 0);
+    if (p.saat / HOURS_PER_DAY <= gun) gelecek += a.teklif - a.avans - (a.hakToplam || 0) - p.ceza + (a.teminatTutar || 0);
   });
   (S.devs || []).forEach(d => { if (d.stage !== 'satis' && d.stage !== 'bitti') { const tot = d.fazlar.reduce((s, x) => s + x.ah, 0); const kalanAh = d.fazlar.slice(d.faz).reduce((s, x) => s + x.ah, 0) - (d.stage === 'insaat' ? d.ilerleme : 0); diger += d.mal * kalanAh / tot * 0.9 + kalanAh * 3500 / HOURS_PER_DAY; } });
   const pesin = f.malzeme.net + f.teminat + (f.mob || 0) - avans;
+  // bu işin teslimden önceki ay sonlarında gelecek hakedişler (son ay hariç, temkinli)
+  const gunAyIci = DAYS_PER_MONTH - ((S.day - 1) % DAYS_PER_MONTH);
+  if (gun > gunAyIci) { const odenenOran = Math.min(1, (gun - Math.max(1, (gun - gunAyIci) % DAYS_PER_MONTH || DAYS_PER_MONTH)) / gun); gelecek += Math.max(0, (f.teklif * (1 - HAK_KESINTI) - avans) * odenenOran * 0.9); }
   const isGider = f.est.iscilik + sabitGunluk * gun;
   const gerekli = Math.max(0, round100(pesin + isGider + diger - gelecek));
   const enDusuk = round100(S.money - pesin - isGider - diger + gelecek);
@@ -605,7 +608,7 @@ function completeJob(S, a, events) {
   const c = cezaOf(a, S);
   const gec = Math.max(0, Math.ceil((a.gecen - a.sure * HOURS_PER_DAY) / HOURS_PER_DAY - 1e-6));
   const ceza = Math.min(round100(a.teklif * c.gunluk) * gec, round100(a.teklif * c.tavan));
-  let odeme = a.teklif - a.avans - ceza, kurNot = '';
+  let odeme = a.teklif - a.avans - (a.hakToplam || 0) - ceza, kurNot = '';
   if (a.yurtdisi) { const sp = repLevel(S.rep) >= 6 ? 0.05 : 0.1; const kur = rnd(1 - sp, 1 + sp * 1.2); const fark = round100(odeme * (kur - 1)); odeme += fark; kurNot = `, kur farkı ${fark >= 0 ? '+' : '−'}${fmt(Math.abs(fark))}`; }
   S.money += odeme; S.month.gelir += odeme;
   if (a.teminatTutar) S.money += a.teminatTutar;
@@ -618,7 +621,7 @@ function completeJob(S, a, events) {
   // deneyim
   const xs = a.tur === 'proje' ? ['teknik'] : ['saha', 'liderlik'];
   xs.forEach(k => { S.xp[k] = (S.xp[k] || 0) + 1; if (S.xp[k] >= 3) { S.xp[k] = 0; if (S.player[k] < 10) { S.player[k]++; events.push({ tip: 'xp', t: `Deneyim: ${STAT_AD[k]} ${S.player[k]}. seviyeye çıktı.` }); } } });
-  const msg = `${a.ad} teslim edildi. Ödeme ${fmt(odeme)}${ceza ? `, gecikme cezası −${fmt(ceza)}` : ''}${kurNot}${a.teminatTutar ? `, teminat ${fmt(a.teminatTutar)} iade edildi` : ''}. İtibar ${repDelta >= 0 ? '+' : ''}${repDelta}.`;
+  const msg = `${a.ad} teslim edildi. ${a.hakToplam ? `Hakedişlerden sonra kalan ` : ''}Ödeme ${fmt(odeme)}${ceza ? `, gecikme cezası −${fmt(ceza)}` : ''}${kurNot}${a.teminatTutar ? `, teminat ${fmt(a.teminatTutar)} iade edildi` : ''}. İtibar ${repDelta >= 0 ? '+' : ''}${repDelta}.`;
   log(S, msg); events.push({ tip: 'teslim', t: msg });
   checkLevel(S, events);
 }
@@ -647,7 +650,32 @@ function endDay(S, events) {
   S.day++; S.hour = DAY_START;
   return gone;
 }
+// ===== Aylık hakediş =====
+const HAK_KESINTI = 0.05;
+function jobProgress(a) {
+  if (a.tur === 'proje') return Math.min(1, a.ilerleme / a.ah);
+  const tot = (a.projeAh || 0) + a.fazlar.reduce((s, f) => s + f.ah, 0);
+  let done = (a.projeAh || 0) - (a.projeKalan || 0);
+  if (!(a.projeKalan > 0)) { done += a.fazlar.slice(0, a.faz).reduce((s, f) => s + f.ah, 0); if (a.faz < a.fazlar.length) done += Math.min(a.ilerleme, a.fazlar[a.faz].ah); }
+  return Math.min(1, done / tot);
+}
+function hakedisYap(S) {
+  const list = [];
+  S.active.forEach(a => {
+    const p = jobProgress(a), d = p - (a.hakOran || 0);
+    if (d < 0.002) return;
+    let tutar = a.teklif * d * (1 - HAK_KESINTI) - a.avans * d;
+    if (a.yurtdisi) tutar *= rnd(repLevel(S.rep) >= 6 ? 0.97 : 0.94, repLevel(S.rep) >= 6 ? 1.04 : 1.07);
+    tutar = round100(tutar);
+    S.money += tutar; S.month.gelir += tutar;
+    a.hakOran = p; a.hakToplam = (a.hakToplam || 0) + tutar; a.hakNo = (a.hakNo || 0) + 1;
+    list.push({ ad: a.ad, no: a.hakNo, oran: Math.round(p * 100), tutar });
+    log(S, `${a.ad}: ${a.hakNo}. hakediş ${fmt(tutar)} (ilerleme %${Math.round(p * 100)}).`);
+  });
+  return list;
+}
 function monthEnd(S, events) {
+  const hakedisler = hakedisYap(S);
   const kira = OFFICES[S.tier].kira;
   const maas = S.staff.reduce((s, p) => s + p.maas, 0);
   S.money -= kira + maas; S.month.gider += kira + maas;
@@ -656,8 +684,8 @@ function monthEnd(S, events) {
   S.money -= vergi;
   const faiz = S.kredi ? round100(S.kredi * KREDI_FAIZ) : 0;
   S.money -= faiz; S.month.gider += faiz;
-  const alacak = S.active.reduce((s, a) => s + a.teklif - a.avans, 0);
-  const rapor = { faiz, kredi: S.kredi || 0, alacak, ay: dateStr(S).ay, gelir: Math.round(S.month.gelir), gider: Math.round(S.month.gider), kira, maas, vergi, net: Math.round(kar - vergi), kasa: Math.round(S.money) };
+  const alacak = S.active.reduce((s, a) => s + a.teklif - a.avans - (a.hakToplam || 0), 0);
+  const rapor = { hakedisler, faiz, kredi: S.kredi || 0, alacak, ay: dateStr(S).ay, gelir: Math.round(S.month.gelir), gider: Math.round(S.month.gider), kira, maas, vergi, net: Math.round(kar - vergi), kasa: Math.round(S.money) };
   S.lastReport = rapor;
   S.negMonths = S.money < 0 ? S.negMonths + 1 : 0;
   log(S, `${rapor.ay}. ay kapandı: net ${fmt(rapor.net)}.`);
@@ -1087,7 +1115,7 @@ function moveOffice(S, t) {
 }
 function fmt(x) { const n = Math.round(x); return (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('tr-TR') + ' TL'; }
 
-if (typeof module !== 'undefined') module.exports = { startSearch, decideRaise, staffGainXp, genApplicant, STAR_XP, cashCheck, checkLevel, krediCek, krediOde, krediLimit, rescueOptions, applyRescue, LEVEL_PERKS, jobLoad, PAKET, tasPower, genTasOffers, JOB_TEMPLATES, PARCELS: typeof PARCELS!=='undefined'?PARCELS:null, teamSpeed, defaultTeam, suggestFix, applyFix, projectJob, riskCheck, assignUstas, buyParcel, presell, devCostEstimate, devEnsure, devUnitPrice, drawerName, newGame, simulate, endDay, genJob, autoAlloc, estimate, fullOffer, acceptJob, jobLock, buyProgram, startCourse, buyItem, moveOffice, hire, fire, repLevel, orgCapacity, fmt, OFFICES, REP_LEVELS, setRng: f => { RNG = f; } };
+if (typeof module !== 'undefined') module.exports = { jobProgress, hakedisYap, startSearch, decideRaise, staffGainXp, genApplicant, STAR_XP, cashCheck, checkLevel, krediCek, krediOde, krediLimit, rescueOptions, applyRescue, LEVEL_PERKS, jobLoad, PAKET, tasPower, genTasOffers, JOB_TEMPLATES, PARCELS: typeof PARCELS!=='undefined'?PARCELS:null, teamSpeed, defaultTeam, suggestFix, applyFix, projectJob, riskCheck, assignUstas, buyParcel, presell, devCostEstimate, devEnsure, devUnitPrice, drawerName, newGame, simulate, endDay, genJob, autoAlloc, estimate, fullOffer, acceptJob, jobLock, buyProgram, startCourse, buyItem, moveOffice, hire, fire, repLevel, orgCapacity, fmt, OFFICES, REP_LEVELS, setRng: f => { RNG = f; } };
 </script>
 <script>// ===== Arayüz =====
 const SAVE_KEY = 'muhendisOfisi_v1';
@@ -1237,7 +1265,7 @@ function renderActive() {
     }
     return `<button class="jobcard active" data-act="${a.id}"><div class="jrow">${turChip(a)}<b class="price">${fmt(a.teklif)}</b></div>
       <div class="jname">${esc(a.ad)}</div>${body}
-      <div class="jrow small ${gec || a.risk ? 'warn' : 'muted'}"><span>${gec ? 'Süre aşıldı · ceza işliyor' : a.risk ? `Gecikme riski: +${a.risk} gün · dokun, önlem al` : `Kalan süre ${kalanGun} gün`}</span><span>${a.tur === 'saha' ? 'İşçilik ' + fmt(a.iscilikOdenen) + (a.tasarruf > 0 ? ` · kendi ustanla tasarruf ${fmt(a.tasarruf)}` : '') : ''}</span></div></button>`;
+      <div class="jrow small ${gec || a.risk ? 'warn' : 'muted'}"><span>${gec ? 'Süre aşıldı · ceza işliyor' : a.risk ? `Gecikme riski: +${a.risk} gün · dokun, önlem al` : `Kalan süre ${kalanGun} gün`}</span><span>${a.hakToplam ? `Hakediş ${fmt(a.hakToplam)} · ` : ''}${a.tur === 'saha' ? 'İşçilik ' + fmt(a.iscilikOdenen) + (a.tasarruf > 0 ? ` · kendi ustanla tasarruf ${fmt(a.tasarruf)}` : '') : ''}</span></div></button>`;
   }).join('');
   el.innerHTML = devHtml + el.innerHTML;
   el.querySelectorAll('[data-act]').forEach(b => b.onclick = () => openSheet('active', { id: +b.dataset.act }));
@@ -1299,7 +1327,8 @@ function showModal() {
   let html;
   if (e.tip === 'ay') {
     const r = e.rapor;
-    html = `<h2>${r.ay}. ay raporu</h2><div class="kv"><span>Gelir</span><b>${fmt(r.gelir)}</b><span>Giderler (malzeme, işçilik, alımlar, kira, maaş)</span><b>−${fmt(r.gider).replace('−', '')}</b><span>Kira</span><b>${fmt(r.kira)}</b><span>Maaşlar</span><b>${fmt(r.maas)}</b><span>Vergi (%20, kârdan)</span><b>${fmt(r.vergi)}</b>${r.faiz ? `<span>Kredi faizi</span><b>${fmt(r.faiz)}</b>` : ''}<span><b>Net</b></span><b class="${r.net < 0 ? 'neg' : 'pos'}">${fmt(r.net)}</b><span>Kasa</span><b>${fmt(r.kasa)}</b><span>Devam eden işlerden alınacak</span><b class="pos">${fmt(r.alacak || 0)}</b></div><p class="small muted">Rapor nakit esaslıdır: işlerin kalan ödemesi teslimde gelir.</p>${r.kasa < 0 ? '<p class="warn">Kasa eksiye düştü. Üst üste 2 ay eksi kapatırsan iflas edersin.</p>' : ''}`;
+    const hk = (r.hakedisler || []).length ? `<h3 class="mh">Hakedişler</h3><div class="kv small">${r.hakedisler.map(h => `<span>${esc(h.ad)} · ${h.no}. hakediş (%${h.oran})</span><b class="pos">+${fmt(h.tutar)}</b>`).join('')}</div>` : '';
+    html = `<h2>${r.ay}. ay raporu</h2>${hk}<div class="kv"><span>Gelir</span><b>${fmt(r.gelir)}</b><span>Giderler (malzeme, işçilik, alımlar, kira, maaş)</span><b>−${fmt(r.gider).replace('−', '')}</b><span>Kira</span><b>${fmt(r.kira)}</b><span>Maaşlar</span><b>${fmt(r.maas)}</b><span>Vergi (%20, kârdan)</span><b>${fmt(r.vergi)}</b>${r.faiz ? `<span>Kredi faizi</span><b>${fmt(r.faiz)}</b>` : ''}<span><b>Net</b></span><b class="${r.net < 0 ? 'neg' : 'pos'}">${fmt(r.net)}</b><span>Kasa</span><b>${fmt(r.kasa)}</b><span>Devam eden işlerden alınacak</span><b class="pos">${fmt(r.alacak || 0)}</b></div><p class="small muted">Rapor nakit esaslıdır: işler her ay sonu yapılan kısım kadar hakediş öder, kalanı (kesintiler dahil) teslimde gelir.</p>${r.kasa < 0 ? '<p class="warn">Kasa eksiye düştü. Üst üste 2 ay eksi kapatırsan iflas edersin.</p>' : ''}`;
   } else if (e.tip === 'risk') {
     const a = S.active.find(x => x.id === e.jobId);
     if (!a) { queue.shift(); if (queue.length) showModal(); return; }
@@ -1484,7 +1513,7 @@ function jobBody() {
       ${c.enDusuk < 0 ? `<span class="small neg">Bu işi alırsan kasa teslimden önce eksiye düşer. Ek ${fmt(-c.enDusuk)} bulman gerekir (kredi, ön satış, önce başka bir işi bitirmek).</span>` : '<span class="small muted">Teslim ödemesi gelmeden önceki en sıkışık an hesaplandı.</span>'}</div>`; })()}
     ${f.mob ? `<p class="small"><b>Mobilizasyon:</b> ${fmt(f.mob)} peşin (net kâra dahil edildi).</p>` : ''}
     ${f.teminat ? `<p class="small"><b>Teminat mektubu:</b> ${fmt(f.teminat)} (teklifin %${Math.round(f.teminat / f.teklif * 100)}'i) iş bitene kadar bağlı kalır, teslimde iade edilir. Kabul için kasada malzeme + teminat = ${fmt(f.malzeme.net + f.teminat)} gerekir.</p>` : ''}
-    <p class="small muted">Ceza tavanı: ${fmt(f.cezaTavan)} · Kabulde %${Math.round(f.avansOran * 100)} avans (${fmt(f.avansT)}) gelir, malzeme peşin ödenir.</p>
+    <p class="small muted">Ceza tavanı: ${fmt(f.cezaTavan)} · Kabulde %${Math.round(f.avansOran * 100)} avans (${fmt(f.avansT)}) gelir, malzeme peşin ödenir. Her ay sonu yapılan iş kadar hakediş ödenir (%5 kesinti ve avans mahsubu); kalanı teslimde.</p>
   </div>
   ${S.active.length >= orgCapacity(S) ? `<p class="warn">Kapasite dolu (${S.active.length}/${orgCapacity(S)}). Bu işi alırsan tüm işler %20 yavaşlar.</p>` : ''}
   <div class="actions"><button class="secondary" id="pass">Pas geç</button><button class="primary" id="accept" ${lock ? 'disabled' : ''}>Teklifi kabul et</button></div>`;
@@ -1505,7 +1534,7 @@ function activeBody() {
   }
   return `<div class="jrow">${turChip(a)}<b>${fmt(a.teklif)}</b></div><h2 class="big">${esc(a.ad)}</h2>
   <div class="card riskcard"><h3 class="mh">Süre durumu</h3>${a.gecUyari ? '<p class="warn">Süre aşıldı, ceza işliyor.</p>' : riskHtml(a)}</div>
-  <div class="kv"><span>Geçen süre</span><b>${(a.gecen / HOURS_PER_DAY).toFixed(1)} / ${a.sure} gün</b><span>Avans alındı</span><b>${fmt(a.avans)}</b><span>Teslimde alınacak</span><b>${fmt(a.teklif - a.avans)}</b>${a.tas ? Object.entries(a.tas).filter(([, v]) => v).map(([k, v]) => `<span>${PAKET[k].ad} taşeronu</span><b>${esc(v.ad)} ${'★'.repeat(v.yildiz)}</b>`).join('') + `<span>Taşerona ödenen</span><b>${fmt(a.tasOdenen || 0)}</b>${a.tasPrim ? '<span>Hızlandırma primi</span><b>Aktif</b>' : ''}` : ''}${a.teminatTutar ? `<span>Bağlı teminat (teslimde iade)</span><b>${fmt(a.teminatTutar)}</b>` : ''}${a.tur === 'saha' ? `<span>Ödenen işçilik</span><b>${fmt(a.iscilikOdenen)}</b>` : ''}</div>${extra}`;
+  <div class="kv"><span>Geçen süre</span><b>${(a.gecen / HOURS_PER_DAY).toFixed(1)} / ${a.sure} gün</b><span>Avans alındı</span><b>${fmt(a.avans)}</b><span>İlerleme</span><b>%${Math.round(jobProgress(a) * 100)}</b><span>Alınan hakediş${a.hakNo ? ` (${a.hakNo} adet)` : ''}</span><b>${fmt(a.hakToplam || 0)}</b><span>Bu ay sonu hakediş (tahmini)</span><b class="pos">${fmt(Math.max(0, round100(a.teklif * (jobProgress(a) - (a.hakOran || 0)) * (1 - HAK_KESINTI) - a.avans * (jobProgress(a) - (a.hakOran || 0)))))}</b><span>Teslimde alınacak</span><b>${fmt(a.teklif - a.avans - (a.hakToplam || 0))}</b>${a.tas ? Object.entries(a.tas).filter(([, v]) => v).map(([k, v]) => `<span>${PAKET[k].ad} taşeronu</span><b>${esc(v.ad)} ${'★'.repeat(v.yildiz)}</b>`).join('') + `<span>Taşerona ödenen</span><b>${fmt(a.tasOdenen || 0)}</b>${a.tasPrim ? '<span>Hızlandırma primi</span><b>Aktif</b>' : ''}` : ''}${a.teminatTutar ? `<span>Bağlı teminat (teslimde iade)</span><b>${fmt(a.teminatTutar)}</b>` : ''}${a.tur === 'saha' ? `<span>Ödenen işçilik</span><b>${fmt(a.iscilikOdenen)}</b>` : ''}</div>${extra}`;
 }
 
 function devPct(d) { const tot = d.fazlar.reduce((s, f) => s + f.ah, 0); const done = d.fazlar.slice(0, d.faz).reduce((s, f) => s + f.ah, 0) + (d.faz < d.fazlar.length ? d.ilerleme : 0); return Math.min(100, done / tot * 100); }
