@@ -1346,13 +1346,20 @@ function bindRescue(root) {
 
 // ---------- Sayfalar
 function openSheet(name, st) { sheet = name; sheetState = st || {}; renderSheet(); }
-function closeSheet() { sheet = null; sheetState = {}; const s = $('#sheet'); if (s) s.remove(); renderScene(); refresh(); save(); }
+function closeSheet() { sheetKey = null; sheet = null; sheetState = {}; const s = $('#sheet'); if (s) s.remove(); renderScene(); refresh(); save(); }
+let sheetKey = null;
 function renderSheet() {
   let s = $('#sheet');
   if (!s) { s = document.createElement('div'); s.id = 'sheet'; s.className = 'sheet'; document.body.appendChild(s); }
+  // aynı ekran yeniden çizilirken kaydırma konumunu koru; başka ekrana geçince en başa dön
+  const key = sheet + ':' + (sheetState.id || '');
+  const oldBody = s.querySelector('.sheetbody');
+  const keep = oldBody && key === sheetKey ? oldBody.scrollTop : 0;
+  sheetKey = key;
   const titles = { land: 'Arsa ve Yap-Sat', board: 'İş Panosu', job: 'Teklif', staff: 'Personel', edu: 'Eğitim ve Programlar', office: 'Ofis', report: 'Rapor', active: 'İş durumu' };
   const back = (sheet === 'job') ? `<button class="iconbtn" id="sBack" aria-label="Geri">‹</button>` : '';
   s.innerHTML = `<div class="sheethead">${back}<h2>${titles[sheet]}</h2><span class="small muted">Zaman durdu</span><button class="iconbtn" id="sClose" aria-label="Kapat">${ICON.close}</button></div><div class="sheetbody">${sheetBody()}</div>`;
+  const nb = s.querySelector('.sheetbody'); if (nb && keep) nb.scrollTop = keep;
   $('#sClose').onclick = closeSheet;
   const b = $('#sBack'); if (b) b.onclick = () => openSheet('board');
   bindSheet();
