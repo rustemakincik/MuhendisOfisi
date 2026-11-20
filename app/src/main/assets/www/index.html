@@ -103,6 +103,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .cashbox.bad{border-color:#FECACA;background:#FEF2F2}
 .prize{display:flex;flex-direction:column;gap:2px;background:#FEF3C7;border-radius:12px;padding:12px}.prize b{font-size:15px}.prize span{font-weight:700;color:var(--green)}
 .perks{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:3px}
+.starOff{color:#D1D5DB}
 </style>
 </head>
 <body>
@@ -547,6 +548,13 @@ function simulate(S, dt, events) {
     }
   }
   devEnsure(S); simulateDevs(S, dt, busy, of, events);
+  // tecrübe: sahada çalışan usta, çizen mühendis, şantiye şefi tekniker
+  S.staff.forEach(p => {
+    if (p.rol === 'usta') { if (p.job) staffGainXp(S, p, dt, events); }
+    else if (busy.has(p.id)) staffGainXp(S, p, dt, events);
+    else if (S.active.some(a => a.lider === p.id && a.tur === 'saha') || (S.devs || []).some(d => d.lider === p.id && d.stage === 'insaat')) staffGainXp(S, p, dt, events);
+  });
+  tickSearch(S, dt, events);
   if (S.training) {
     S.training.kalan -= dt;
     if (S.training.kalan <= 0) {
@@ -920,18 +928,74 @@ function riskCheck(S, events) {
 }
 
 // Personel
-function genApplicant(S) {
-  const r = RNG(), rol = r < 0.55 ? 'usta' : r < 0.8 ? 'tekniker' : 'muhendis';
-  const st = () => Math.min(10, rint(1, 4) + (RNG() < 0.25 ? rint(2, 4) : 0) + (repLevel(S.rep) >= 2 ? 1 : 0));
-  const p = { id: S.nextId++, ad: pick(ISIMLER) + ' ' + pick(SOYAD), rol, teknik: st(), saha: st(), pazarlik: rint(1, 4), liderlik: st(), organizasyon: rint(1, 5), job: null };
-  if (rol === 'usta') { p.trade = pick(Object.keys(TRADES)); p.teknik = 1; }
-  if (rol === 'muhendis') p.teknik = Math.max(p.teknik, rint(3, 7));
-  const top = p.teknik + p.saha + p.liderlik + p.organizasyon;
-  const baz = { usta: 30000, tekniker: 38000, muhendis: 55000 }[rol];
-  p.maas = round100(baz + top * 1500);
+// ===== Personel yıldızı ve tecrübe =====
+const STAR_XP = [0, 0, 160, 420, 850, 1500]; // bu yıldıza çıkmak için gereken toplam çalışma saati
+const STAR_ODDS = [0.42, 0.34, 0.17, 0.06, 0.01];
+function starLimitByRep(S) { const L = repLevel(S.rep); return L >= 3 ? 5 : L >= 1 ? 4 : 3; }
+function genApplicant(S, opt) {
+  opt = opt || {};
+  const r = RNG();
+  const rol = opt.rol || (r < 0.55 ? 'usta' : r < 0.8 ? 'tekniker' : 'muhendis');
+  let yildiz = 1; { let x = RNG(), acc = 0; for (let k = 0; k < 5; k++) { acc += STAR_ODDS[k]; if (x <= acc) { yildiz = k + 1; break; } } }
+  if (opt.minStar) yildiz = Math.max(opt.minStar, yildiz);
+  yildiz = Math.min(yildiz, Math.max(opt.minStar || 1, starLimitByRep(S)));
+  const bonus = repLevel(S.rep) >= 2 ? 1 : 0;
+  const st = () => Math.min(10, rint(1, 3) + (yildiz - 1) + (RNG() < 0.2 ? rint(1, 2) : 0) + bonus);
+  const p = { id: S.nextId++, ad: pick(ISIMLER) + ' ' + pick(SOYAD), rol, yildiz, xp: STAR_XP[yildiz], teknik: st(), saha: st(), pazarlik: rint(1, 4), liderlik: st(), organizasyon: rint(1, 4) + Math.floor((yildiz - 1) / 2), job: null };
+  if (rol === 'usta') { p.trade = opt.trade || pick(Object.keys(TRADES)); p.teknik = 1; p.saha = Math.min(10, p.saha + 1); }
+  if (rol === 'muhendis') p.teknik = Math.min(10, Math.max(p.teknik, rint(3, 5) + yildiz - 1));
+  if (opt.aranan) p.aranan = true;
+  p.maas = salaryOf(p);
   return p;
 }
-function refreshApplicants(S) { S.applicants = [genApplicant(S), genApplicant(S), genApplicant(S)]; }
+function salaryOf(p) {
+  const top = p.teknik + p.saha + p.liderlik + p.organizasyon;
+  const baz = { usta: 30000, tekniker: 38000, muhendis: 55000 }[p.rol];
+  return round100(baz + top * 1500 + (p.yildiz - 1) * 6000);
+}
+function staffGainXp(S, p, dt, events) {
+  if (!p) return;
+  if (p.yildiz === undefined) { p.yildiz = 1; p.xp = 0; }
+  p.xp = (p.xp || 0) + dt;
+  if (p.yildiz < 5 && p.xp >= STAR_XP[p.yildiz + 1] && !p.zamBekliyor) {
+    p.yildiz++;
+    const keys = p.rol === 'usta' ? ['saha', 'liderlik'] : p.rol === 'tekniker' ? ['liderlik', 'saha', 'organizasyon'] : ['teknik', 'organizasyon'];
+    const art = [];
+    keys.forEach((k, i) => { if (i < 2 && p[k] < 10) { p[k]++; art.push(`${STAT_AD[k]} ${p[k]}`); } });
+    const yeni = Math.max(round100(p.maas * 1.1), salaryOf(p));
+    p.zamBekliyor = yeni;
+    events.push({ tip: 'yildiz', id: p.id, t: `${p.ad} ${p.yildiz}★ oldu (${art.join(', ')}). Maaşını ${fmt(p.maas)}'den ${fmt(yeni)}'ye çıkarmanı istiyor.` });
+    log(S, `${p.ad} ${p.yildiz}★ oldu.`);
+  }
+}
+function decideRaise(S, id, kabul) {
+  const p = S.staff.find(x => x.id === id); if (!p || !p.zamBekliyor) return null;
+  if (kabul) { log(S, `${p.ad}: zam kabul edildi (${fmt(p.maas)} → ${fmt(p.zamBekliyor)}).`); p.maas = p.zamBekliyor; p.zamBekliyor = null; return 'kabul'; }
+  p.zamBekliyor = null;
+  if (RNG() < 0.35) { S.staff = S.staff.filter(x => x !== p); S.active.forEach(a => { if (a.team) { a.team = a.team.filter(w => w !== id); if (!a.team.length) a.team = ['player']; } if (a.lider === id) a.lider = null; }); log(S, `${p.ad} zam alamayınca istifa etti.`); return 'istifa'; }
+  log(S, `${p.ad} zam alamadı ama kalmaya razı oldu.`); return 'kaldi';
+}
+// Personel arama: ücretli, 2 gün sürer
+function searchCost(minStar) { return [0, 3000, 8000, 20000, 50000, 120000][minStar]; }
+function startSearch(S, rol, trade, minStar) {
+  if (S.search) return 'Zaten bir arama sürüyor';
+  if (minStar > starLimitByRep(S)) return `${minStar}★ personel için itibarın yetmiyor`;
+  const c = searchCost(minStar); if (S.money < c) return 'Kasada yeterli para yok';
+  S.money -= c; S.month.gider += c;
+  S.search = { rol, trade: rol === 'usta' ? trade : null, minStar, kalan: 2 * HOURS_PER_DAY, toplam: 2 * HOURS_PER_DAY };
+  log(S, `Personel araması başladı (${minStar}★ ve üstü, ${fmt(c)}).`);
+  return null;
+}
+function tickSearch(S, dt, events) {
+  if (!S.search) return;
+  S.search.kalan -= dt;
+  if (S.search.kalan > 1e-6) return;
+  const s = S.search; S.search = null;
+  const bulunan = [0, 1, 2].map(() => genApplicant(S, { rol: s.rol, trade: s.trade, minStar: s.minStar, aranan: true }));
+  S.applicants = bulunan.concat(S.applicants.filter(a => !a.aranan)).slice(0, 8);
+  events.push({ tip: 'arama', t: `Personel araması bitti: ${bulunan.length} aday bulundu (${bulunan.map(b => b.yildiz + '★').join(', ')}). Personel ekranında başvuruların başında.` });
+}
+function refreshApplicants(S) { S.applicants = (S.applicants || []).filter(a => a.aranan).concat([genApplicant(S), genApplicant(S), genApplicant(S)]).slice(0, 8); }
 function hire(S, id) {
   const p = S.applicants.find(x => x.id === id); if (!p) return 'Aday bulunamadı';
   if (p.rol !== 'usta' && deskUsed(S) >= OFFICES[S.tier].masa) return `Masa yok: ${OFFICES[S.tier].ad} en fazla ${OFFICES[S.tier].masa} masa alır. Daha büyük ofise taşın.`;
@@ -985,7 +1049,7 @@ function moveOffice(S, t) {
 }
 function fmt(x) { const n = Math.round(x); return (n < 0 ? '−' : '') + Math.abs(n).toLocaleString('tr-TR') + ' TL'; }
 
-if (typeof module !== 'undefined') module.exports = { cashCheck, checkLevel, krediCek, krediOde, krediLimit, rescueOptions, applyRescue, LEVEL_PERKS, jobLoad, PAKET, tasPower, genTasOffers, JOB_TEMPLATES, PARCELS: typeof PARCELS!=='undefined'?PARCELS:null, teamSpeed, defaultTeam, suggestFix, applyFix, projectJob, riskCheck, assignUstas, buyParcel, presell, devCostEstimate, devEnsure, devUnitPrice, drawerName, newGame, simulate, endDay, genJob, autoAlloc, estimate, fullOffer, acceptJob, jobLock, buyProgram, startCourse, buyItem, moveOffice, hire, fire, repLevel, orgCapacity, fmt, OFFICES, REP_LEVELS, setRng: f => { RNG = f; } };
+if (typeof module !== 'undefined') module.exports = { startSearch, decideRaise, staffGainXp, genApplicant, STAR_XP, cashCheck, checkLevel, krediCek, krediOde, krediLimit, rescueOptions, applyRescue, LEVEL_PERKS, jobLoad, PAKET, tasPower, genTasOffers, JOB_TEMPLATES, PARCELS: typeof PARCELS!=='undefined'?PARCELS:null, teamSpeed, defaultTeam, suggestFix, applyFix, projectJob, riskCheck, assignUstas, buyParcel, presell, devCostEstimate, devEnsure, devUnitPrice, drawerName, newGame, simulate, endDay, genJob, autoAlloc, estimate, fullOffer, acceptJob, jobLock, buyProgram, startCourse, buyItem, moveOffice, hire, fire, repLevel, orgCapacity, fmt, OFFICES, REP_LEVELS, setRng: f => { RNG = f; } };
 </script>
 <script>// ===== Arayüz =====
 const SAVE_KEY = 'muhendisOfisi_v1';
@@ -1021,6 +1085,8 @@ const ICON = {
   land: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M6 21V9h5v12"/><path d="M11 21V4h7v17"/><path d="M14 8h1M14 12h1M14 16h1"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
+const starStr = n => `<span class="stars" aria-label="${n || 1} yıldız">${'★'.repeat(n || 1)}<span class="starOff">${'★'.repeat(5 - (n || 1))}</span></span>`;
+function xpBar(p) { const y = p.yildiz || 1; if (y >= 5) return '<span class="small muted">En üst yıldız</span>'; const a = STAR_XP[y], b = STAR_XP[y + 1], pct = Math.min(100, ((p.xp || 0) - a) / (b - a) * 100); return `<div class="prow small"><span class="muted">Tecrübe</span><div class="bar"><i style="width:${pct}%"></i></div><span>${Math.round(p.xp || 0)}/${b} saat</span></div>`; }
 const chip = (t, c) => `<span class="chip ${c}">${t}</span>`;
 const turChip = j => (j.firsat ? chip('FIRSAT', 'purple') : '') + (j.anahtar ? chip('ANAHTAR TESLİM', 'teal') : j.tur === 'proje' ? chip('PROJE', 'blue') : chip('SAHA', 'amber')) + (j.hizli ? chip('Hızlı', 'green') : j.acil ? chip('Acil', 'orange') : chip('Normal', 'gray'));
 
@@ -1207,13 +1273,22 @@ function showModal() {
   } else if (e.tip === 'iflas') {
     html = `<h2>İflas</h2><p>Kasa üç aydır eksi ve kurtarma yolu kalmadı. Ofis kapandı.</p><button class="primary" id="restart">Yeni oyun</button>`;
   } else {
-    const title = { seviye: 'Yeni mevki', kriz: 'Kasa eksi', firsat: 'Sürpriz fırsat!', risk: 'Gecikme riski', yap: 'Yap-sat projesi', teslim: 'İş teslim edildi', gec: 'Gecikme', egitim: 'Eğitim bitti', xp: 'Deneyim' }[e.tip] || 'Bilgi';
+    const title = { yildiz: 'Personel yıldız atladı', arama: 'Personel araması bitti', seviye: 'Yeni mevki', kriz: 'Kasa eksi', firsat: 'Sürpriz fırsat!', risk: 'Gecikme riski', yap: 'Yap-sat projesi', teslim: 'İş teslim edildi', gec: 'Gecikme', egitim: 'Eğitim bitti', xp: 'Deneyim' }[e.tip] || 'Bilgi';
     html = `<h2>${title}</h2><p>${esc(e.t)}</p>`;
   }
   const m = document.createElement('div'); m.id = 'modal'; m.className = 'modalwrap';
   m.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}${e.tip !== 'iflas' ? '<button class="primary" id="mOk">Tamam</button>' : ''}</div>`;
   document.body.appendChild(m);
   const ok = $('#mOk'); if (ok) ok.onclick = () => { m.remove(); queue.shift(); if (queue.length) showModal(); refresh(); };
+  if (e.tip === 'yildiz') {
+    if (ok) ok.remove();
+    const box = m.querySelector('.modal');
+    box.insertAdjacentHTML('beforeend', `<p class="small muted">Reddedersen %35 ihtimalle istifa eder.</p><div class="actions"><button class="secondary" id="zRed">Reddet</button><button class="primary" id="zKabul">Zammı kabul et</button></div>`);
+    const fin = r => { toast(r === 'kabul' ? 'Zam verildi' : r === 'istifa' ? 'Personel istifa etti' : 'Zam verilmedi, kalmaya razı oldu'); m.remove(); queue.shift(); if (queue.length) showModal(); refresh(); };
+    box.querySelector('#zKabul').onclick = () => fin(decideRaise(S, e.id, true));
+    box.querySelector('#zRed').onclick = () => fin(decideRaise(S, e.id, false));
+  }
+  if (e.tip === 'arama' && ok) { ok.textContent = 'Adayları gör'; ok.onclick = () => { m.remove(); queue.shift(); if (queue.length) showModal(); else openSheet('staff'); refresh(); }; }
   if (e.tip === 'kriz') { if (ok) { ok.textContent = 'Kendim hallederim'; ok.className = 'secondary'; } bindRescue(m); }
   if (e.tip === 'seviye' && ok) ok.textContent = 'Harika, devam';
   if (e.tip === 'firsat' && ok) { ok.textContent = 'Panoya git'; ok.onclick = () => { m.remove(); queue.shift(); if (queue.length) showModal(); else openSheet('board', { f: 'all' }); refresh(); }; }
@@ -1438,6 +1513,19 @@ function ustaYer(p) {
   const d = (S.devs || []).find(x => 'd' + x.id === p.job); if (d) return 'çalışıyor: ' + esc(d.ad);
   return 'boşta';
 }
+
+function searchHtml() {
+  if (S.search) { const s = S.search; return `<h3>Personel ara</h3><div class="card warnbg">Arama sürüyor: ${s.rol === 'usta' ? TRADES[s.trade].ad + ' ustası' : s.rol === 'tekniker' ? 'Tekniker' : 'İnşaat mühendisi'} · en az ${s.minStar}★ · kalan ${(s.kalan / HOURS_PER_DAY).toFixed(1)} gün</div>`; }
+  const st = sheetState.ara || (sheetState.ara = { rol: 'usta', trade: 'boyaci', minStar: 2 });
+  const lim = starLimitByRep(S);
+  return `<h3>Personel ara</h3><div class="card">
+  <div class="filters">${[['usta', 'Usta'], ['tekniker', 'Tekniker'], ['muhendis', 'İnşaat mühendisi']].map(([k, n]) => `<button class="pill ${st.rol === k ? 'on' : ''}" data-arol="${k}">${n}</button>`).join('')}</div>
+  ${st.rol === 'usta' ? `<div class="filters">${Object.entries(TRADES).map(([k, t]) => `<button class="pill ${st.trade === k ? 'on' : ''}" data-atrade="${k}">${t.ad}</button>`).join('')}</div>` : ''}
+  <div class="small"><b>En az</b></div><div class="filters">${[1, 2, 3, 4, 5].map(n => `<button class="pill ${st.minStar === n ? 'on' : ''}" data-astar="${n}" ${n > lim ? 'disabled' : ''}>${n}★</button>`).join('')}</div>
+  ${lim < 5 ? `<span class="small muted">${lim + 1}★ ve üstü için itibar gerekir (${lim < 4 ? 'Güvenilir Firma' : 'Tanınmış Firma'}).</span>` : ''}
+  <div class="jrow"><span class="small muted">2 gün sürer · 3 aday bulunur</span><b>${fmt(searchCost(st.minStar))}</b></div>
+  <button class="primary small" id="startSearch">Aramayı başlat</button></div>`;
+}
 function staffBody() {
   const st = p => (p.rol === 'usta' ? ['saha', 'liderlik'] : ['teknik', 'saha', 'liderlik', 'organizasyon']).map(k => `<span class="stat">${STAT_AD[k]} <b>${p[k]}</b></span>`).join('');
   const me = S.player;
@@ -1447,9 +1535,10 @@ function staffBody() {
   ${S.staff.length ? `<div class="card"><table class="stbl"><thead><tr><th>Görev</th><th>Kişi</th><th>İşte</th><th>Boşta</th><th>Aylık maaş</th></tr></thead><tbody>${staffGroups().map(g => `<tr><td>${g.ad}</td><td>${g.list.length}</td><td>${g.isde}</td><td class="${g.list.length - g.isde ? 'warn' : ''}">${g.list.length - g.isde}</td><td>${fmt(g.maas)}</td></tr>`).join('')}</tbody><tfoot><tr><td>Toplam</td><td>${S.staff.length}</td><td>${staffGroups().reduce((s, g) => s + g.isde, 0)}</td><td>${staffGroups().reduce((s, g) => s + g.list.length - g.isde, 0)}</td><td>${fmt(S.staff.reduce((s, p) => s + p.maas, 0))}</td></tr></tfoot></table>
   <span class="small muted">Masa: ${deskUsed(S)}/${OFFICES[S.tier].masa} (sen dahil; ustalar masa kullanmaz)</span></div>` : ''}
   <h3>Kadro (${S.staff.length})</h3>
-  ${S.staff.length ? staffGroups().map(g => `<div class="grouphead">${g.ad} · ${g.list.length} kişi</div>` + g.list.map(p => `<div class="card"><div class="jrow"><b>${esc(p.ad)}</b><span>${fmt(p.maas)}/ay</span></div><div class="small muted">${rolAd(p)} · ${ustaYer(p)}</div><div class="stats">${st(p)}</div><button class="secondary small" data-fire="${p.id}">İşten çıkar (tazminat ${fmt(round100(p.maas * 0.5))})</button></div>`).join('')).join('') : '<div class="empty">Henüz personelin yok.</div>'}
-  <h3>Başvurular</h3><p class="small muted">Her 5 günde yenilenir. Ustalar masa istemez, sahada çalışır; tekniker ve mühendis masa ister ve iş kapasiteni +1 artırır.</p>
-  ${S.applicants.map(p => `<div class="card"><div class="jrow"><b>${esc(p.ad)}</b><span>${fmt(p.maas)}/ay</span></div><div class="small muted">${rolAd(p)}</div><div class="stats">${st(p)}</div><button class="primary small" data-hire="${p.id}">İşe al</button></div>`).join('')}`;
+  ${S.staff.length ? staffGroups().map(g => `<div class="grouphead">${g.ad} · ${g.list.length} kişi</div>` + g.list.map(p => `<div class="card"><div class="jrow"><b>${esc(p.ad)} ${starStr(p.yildiz)}</b><span>${fmt(p.maas)}/ay</span></div>${xpBar(p)}<div class="small muted">${rolAd(p)} · ${ustaYer(p)}</div><div class="stats">${st(p)}</div><button class="secondary small" data-fire="${p.id}">İşten çıkar (tazminat ${fmt(round100(p.maas * 0.5))})</button></div>`).join('')).join('') : '<div class="empty">Henüz personelin yok.</div>'}
+  ${searchHtml()}
+  <h3>Başvurular</h3><p class="small muted">Her 5 günde yenilenir (aradığın adaylar listede kalır). Ustalar masa istemez, sahada çalışır; tekniker ve mühendis masa ister ve iş kapasiteni +1 artırır. Personel çalıştıkça tecrübe kazanır ve yıldız atlar.</p>
+  ${S.applicants.map(p => `<div class="card"><div class="jrow"><b>${esc(p.ad)} ${starStr(p.yildiz)}</b><span>${fmt(p.maas)}/ay</span></div>${p.aranan ? chip('Aradığın aday', 'purple') : ''}<div class="small muted">${rolAd(p)}</div><div class="stats">${st(p)}</div><button class="primary small" data-hire="${p.id}">İşe al</button></div>`).join('')}`;
 }
 function eduBody() {
   const tr = S.training;
@@ -1504,6 +1593,10 @@ function bindSheet() {
   on('[data-presell]', b => { const e = presell(S, +b.dataset.presell); toast(e || 'Ön satış yapıldı'); renderSheet(); });
   on('[data-kredi]', b => { const e = krediCek(S, +b.dataset.kredi); toast(e || 'Kredi çekildi'); renderSheet(); });
   on('[data-kodeme]', b => { const e = krediOde(S, +b.dataset.kodeme); toast(e || 'Borç ödendi'); renderSheet(); });
+  on('[data-arol]', b => { sheetState.ara.rol = b.dataset.arol; renderSheet(); });
+  on('[data-atrade]', b => { sheetState.ara.trade = b.dataset.atrade; renderSheet(); });
+  on('[data-astar]', b => { sheetState.ara.minStar = +b.dataset.astar; renderSheet(); });
+  const ss = $('#startSearch'); if (ss) ss.onclick = () => { const a = sheetState.ara; const e = startSearch(S, a.rol, a.trade, a.minStar); toast(e || 'Arama başladı · 2 gün'); renderSheet(); };
   const ng = $('#newGame'); if (ng) ng.onclick = () => { if (ng.dataset.sure) { try { localStorage.removeItem(SAVE_KEY); } catch (x) {} closeSheet(); S = null; renderStart(); } else { ng.dataset.sure = 1; ng.textContent = 'Emin misin? Kayıt silinir — tekrar dokun'; } };
 }
 
