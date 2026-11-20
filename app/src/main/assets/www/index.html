@@ -691,10 +691,13 @@ function simulateDevs(S, dt, busy, of, events) {
   for (const d of (S.devs || [])) {
     if (d.stage === 'proje') {
       if (d.ownProje) {
-        let who = null;
-        if (!busy.has('player')) who = 'player'; else { const p = S.staff.find(x => x.rol === 'muhendis' && !busy.has(x.id)); if (p) who = p.id; }
-        d._cizer = who;
-        if (who) { busy.add(who); d.projeIlerleme += drawSpeed(S, { prog: ['cizim', 'beton'] }, who) * dt; }
+        // kendi arsanın projesi: sen (boştaysan) ve boştaki tüm inşaat mühendisleri birlikte çizer
+        const cal = [];
+        if (!busy.has('player')) cal.push('player');
+        S.staff.forEach(p => { if (p.rol === 'muhendis' && !busy.has(p.id)) cal.push(p.id); });
+        d._ekip = cal; d._cizer = cal[0] || null;
+        cal.forEach(w => busy.add(w));
+        if (cal.length) d.projeIlerleme += teamSpeed(S, { prog: ['cizim', 'beton'] }, cal) * dt;
         if (d.projeIlerleme >= d.projeAh) { d.stage = 'ruhsat'; S.money -= d.harc; S.month.gider += d.harc; d.gider += d.harc; events.push({ tip: 'yap', t: `${d.ad}: proje bitti, ruhsat başvurusu yapıldı (harç ${fmt(d.harc)}). Ruhsat 8 gün sürer.` }); }
       } else {
         d.projeKalan -= dt;
@@ -1380,7 +1383,7 @@ function activeBody() {
 
 function devPct(d) { const tot = d.fazlar.reduce((s, f) => s + f.ah, 0); const done = d.fazlar.slice(0, d.faz).reduce((s, f) => s + f.ah, 0) + (d.faz < d.fazlar.length ? d.ilerleme : 0); return Math.min(100, done / tot * 100); }
 function devStageText(d) {
-  if (d.stage === 'proje') return d.ownProje ? `Proje çiziliyor · %${Math.floor(d.projeIlerleme / d.projeAh * 100)} · çizen: ${d._cizer ? esc(drawerName(S, d._cizer)) : 'bekliyor'}` : `Dış proje hazırlanıyor · ${Math.ceil(d.projeKalan / HOURS_PER_DAY)} gün`;
+  if (d.stage === 'proje') return d.ownProje ? `Proje çiziliyor · %${Math.floor(d.projeIlerleme / d.projeAh * 100)} · çizen: ${d._ekip && d._ekip.length ? esc(teamNames(S, d._ekip)) : 'bekliyor (herkes başka işte)'}` : `Dış proje hazırlanıyor · ${Math.ceil(d.projeKalan / HOURS_PER_DAY)} gün`;
   if (d.stage === 'ruhsat') return `Ruhsat bekleniyor · ${Math.ceil(d.ruhsatKalan / HOURS_PER_DAY)} gün`;
   if (d.stage === 'insaat') return `İnşaat · ${TRADES[d.fazlar[d.faz].trade].ad} aşaması${d.faz >= KABA_FAZ ? ' · ön satış açık' : ''}`;
   if (d.stage === 'satis') return `Satışta · ${d.sold + d.presold}/${d.daire} daire satıldı`;
@@ -1419,7 +1422,7 @@ function landBody() {
     <div class="kv"><span>Arsa</span><b>${fmt(p.arsa)}</b><span>Proje ${e.ownProje ? '(sen çizersin, ' + p.projeAh + ' saat)' : '(dışarıya)'}</span><b>${e.ownProje ? '0 TL' : fmt(p.disProje)}</b><span>Ruhsat harcı</span><b>${fmt(p.harc)}</b><span>Malzeme (aşama aşama ödenir)</span><b>${fmt(p.mal)}</b><span>İşçilik (normal tempo)</span><b>${fmt(e.labor)}</b>
     <span><b>Toplam maliyet</b></span><b>${fmt(e.maliyet)}</b><span><b>Tahmini satış</b></span><b>${fmt(e.gelir)}</b></div>
     <div class="netbox"><span>Tahmini kâr</span><b>${fmt(e.kar)}</b></div>
-    <div class="small muted">Süre: proje ${e.ownProje ? '~' + Math.ceil(p.projeAh / 1.2 / HOURS_PER_DAY) : 10} gün + ruhsat 8 gün + inşaat ~${e.insaatGun} gün + satış. Sermaye bu sürede bağlı kalır.</div>
+    <div class="small muted">Süre: proje ${e.ownProje ? '~' + Math.max(1, Math.ceil(p.projeAh / (teamSpeed(S, { prog: ['cizim', 'beton'] }, ['player'].concat(S.staff.filter(x => x.rol === 'muhendis').map(x => x.id))) || 0.8) / HOURS_PER_DAY)) + (S.staff.some(x => x.rol === 'muhendis') ? ' (sen + boştaki mühendisler)' : '') : 10} gün + ruhsat 8 gün + inşaat ~${e.insaatGun} gün + satış. Sermaye bu sürede bağlı kalır.</div>
     ${okRep ? `<button class="primary small" data-parcel="${p.id}" ${okMoney ? '' : 'disabled'}>${okMoney ? 'Arsayı satın al' : 'Kasada yeterli para yok'}</button>` : `<span class="lockt">${ICON.lock} İtibar: ${REP_LEVELS[p.rep].ad}</span>`}</div>`;
   }).join('');
   return h;
