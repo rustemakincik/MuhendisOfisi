@@ -104,6 +104,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .prize{display:flex;flex-direction:column;gap:2px;background:#FEF3C7;border-radius:12px;padding:12px}.prize b{font-size:15px}.prize span{font-weight:700;color:var(--green)}
 .perks{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:3px}
 .starOff{color:#D1D5DB}
+.carried{position:absolute;right:8px;bottom:8px;display:flex;gap:4px;background:rgba(255,255,255,.85);border-radius:10px;padding:4px}.carried img{width:40px;height:36px;object-fit:contain}
 </style>
 </head>
 <body>
@@ -251,7 +252,8 @@ function pazarlikLv(S) { return S.player.pazarlik + (S.items.guest || S.tier >= 
 function hiredRate(S, trade) { const L = repLevel(S.rep); return TRADES[trade].gunluk * (S.start === 'saha' ? 0.9 : 1) * (L >= 2 ? 0.95 : 1) * (L >= 5 ? 0.95 : 1); }
 function officeQuality(S) {
   let q = [0, 40, 60, 75, 90][S.tier];
-  if (S.tier === 1) { if (S.items.coffee) q += 10; if (S.items.decor) q += 5; if (S.items.pc) q += 5; }
+  // eşyalar taşınırken yanında gelir: bonusları her ofiste geçerli
+  if (S.items.coffee) q += 10; if (S.items.decor) q += 5; if (S.tier === 1 && S.items.pc) q += 5;
   return q;
 }
 function staffEff(S) { return 0.85 + officeQuality(S) / 400; } // 0.95 .. 1.075
@@ -380,7 +382,7 @@ function drawSpeed(S, j, who) {
     base = 0.6 + 0.08 * S.player.teknik;
     progLv = Math.min(S.player.prog_cizim, ...progs.map(p => S.player['prog_' + p]));
     if (S.tier === 1 && !S.items.pc) base *= 0.85;
-    if (S.tier === 1 && S.items.chair) base *= 1.05;
+    if (S.items.chair) base *= 1.05;
   } else {
     const p = S.staff.find(x => x.id === who); if (!p) return 0;
     base = (0.6 + 0.08 * p.teknik) * staffEff(S);
@@ -1031,9 +1033,11 @@ function startCourse(S, id) {
   S.training = { id, kalan: c.gun * HOURS_PER_DAY, toplam: c.gun * HOURS_PER_DAY };
   log(S, `${c.ad} başladı (${c.gun} gün). Bu sürede çizim yapamazsın.`); return null;
 }
+// Büyük ofislerde bu eşyalar ofisle birlikte gelir
+function itemBuiltIn(S, k) { return S.tier >= 2 && (k === 'pc' || k === 'shelf' || k === 'guest'); }
 function buyItem(S, k) {
-  if (S.tier !== 1) return 'Bu ofiste zaten var';
   if (S.items[k]) return 'Zaten alındı';
+  if (itemBuiltIn(S, k)) return 'Bu ofiste zaten hazır';
   const f = ITEMS[k].fiyat; if (S.money < f) return 'Kasada yeterli para yok';
   S.money -= f; S.month.gider += f; S.items[k] = true;
   log(S, `${ITEMS[k].ad} alındı.`); return null;
@@ -1146,7 +1150,11 @@ function renderScene() {
     L.push(S.items.chair ? 't1_chair_new' : 't1_chair_old');
     if (S.items.guest) L.push('t1_guest');
     html = L.map(k => `<img src="${IMG[k]}" alt="" class="layer">`).join('');
-  } else html = `<img src="${IMG['t' + S.tier]}" alt="" class="layer">`;
+  } else {
+    html = `<img src="${IMG['t' + S.tier]}" alt="" class="layer">`;
+    const tasinan = Object.keys(ITEMS).filter(k => S.items[k]);
+    if (tasinan.length) html += `<div class="carried" aria-label="Yanında getirdiğin eşyalar">${tasinan.map(k => `<img src="${IMG[ITEMS[k].ic]}" alt="${ITEMS[k].ad}" title="${ITEMS[k].ad}">`).join('')}</div>`;
+  }
   html += `<div class="scenelabel"><b>${OFFICES[S.tier].ad}</b><span>${deskUsed(S)}/${OFFICES[S.tier].masa} masa · ${fmt(OFFICES[S.tier].kira)}/ay</span></div><div id="trainBadge"></div>`;
   el.innerHTML = html;
   el.setAttribute('aria-label', OFFICES[S.tier].ad + ' ofis görünümü');
@@ -1549,7 +1557,10 @@ function eduBody() {
   ${COURSES.map(c => { const lv = S.player[c.stat] || 0, max = c.stat.startsWith('prog_') ? 3 : 10; return `<div class="card"><div class="jrow"><b>${c.ad}</b><span>${fmt(c.fiyat)} · ${c.gun} gün</span></div><div class="small muted">${statName(c.stat)}: ${lv}/${max}${c.need && !S.programs[c.need] ? ' · önce programı al' : ''}</div><button class="primary small" data-course="${c.id}" ${tr || lv >= max || (c.need && !S.programs[c.need]) ? 'disabled' : ''}>Kursa başla</button></div>`; }).join('')}`;
 }
 function officeBody() {
-  const items = S.tier === 1 ? `<h3>Yükseltmeler · ${OFFICES[1].ad}</h3><p class="small muted">Alınan eşyalar taşınırken yeni ofise gelir.</p>${Object.entries(ITEMS).map(([k, it]) => `<div class="card itemcard"><img src="${IMG[it.ic]}" alt=""><div><div class="jrow"><b>${it.ad}</b><span>${fmt(it.fiyat)}</span></div><div class="small muted">${it.etki}</div>${S.items[k] ? chip('Alındı', 'green') : `<button class="primary small" data-item="${k}">Satın al</button>`}</div></div>`).join('')}` : '';
+  const items = `<h3>Eşyalar · ${OFFICES[S.tier].ad}</h3><p class="small muted">Aldığın eşyalar taşınırken yanında gelir ve bonusları her ofiste sürer.${S.tier >= 2 ? ' Bilgisayar, kitaplık ve misafir köşesi bu ofiste zaten hazır.' : ''}</p>${Object.entries(ITEMS).map(([k, it]) => {
+    const durum = S.items[k] ? chip(S.tier >= 2 ? 'Yanında taşındı · etkisi sürüyor' : 'Alındı', 'green') : itemBuiltIn(S, k) ? chip('Bu ofiste hazır', 'gray') : `<button class="primary small" data-item="${k}">Satın al</button>`;
+    return `<div class="card itemcard"><img src="${IMG[it.ic]}" alt=""><div><div class="jrow"><b>${it.ad}</b><span>${fmt(it.fiyat)}</span></div><div class="small muted">${it.etki}</div>${durum}</div></div>`;
+  }).join('')}`;
   const tiers = OFFICES.slice(1).map((o, i) => {
     const t = i + 1, cur = t === S.tier, past = t < S.tier, ok = repLevel(S.rep) >= o.rep;
     return `<div class="card tiercard ${cur ? 'cur' : ''}"><img src="${IMG[t === 1 ? 't1_base' : 't' + t]}" alt="${o.ad}"><div class="jrow"><b>${t}. ${o.ad}</b><span>${fmt(o.kira)}/ay</span></div>
