@@ -105,6 +105,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .perks{margin:0;padding-left:18px;font-size:14px;display:flex;flex-direction:column;gap:3px}
 .starOff{color:#D1D5DB}
 .carried{position:absolute;right:8px;bottom:8px;display:flex;gap:4px;background:rgba(255,255,255,.85);border-radius:10px;padding:4px}.carried img{width:40px;height:36px;object-fit:contain}
+.chip.red{background:#FEE2E2;color:#991B1B}.chip.dark{background:#1F2937;color:#F9FAFB}
 </style>
 </head>
 <body>
@@ -129,7 +130,7 @@ const PROGRAMS = {
 };
 const REP_LEVELS = [
   { min: 0, ad: 'Yeni Ofis' }, { min: 600, ad: 'Güvenilir Firma' }, { min: 1800, ad: 'Bölgesel Firma' },
-  { min: 4500, ad: 'Tanınmış Firma' }, { min: 10000, ad: 'Büyük Yüklenici' }, { min: 22000, ad: 'Ulusal Taahhüt Grubu' },
+  { min: 4500, ad: 'Tanınmış Firma' }, { min: 10000, ad: 'Büyük Yüklenici' }, { min: 22000, ad: 'Ulusal Taahhüt Grubu' }, { min: 50000, ad: 'Küresel Yüklenici' },
 ];
 const OFFICES = [
   null,
@@ -194,6 +195,14 @@ const JOB_TEMPLATES = [
   { tur: 'proje', ad: 'Sanayi yapısı çelik projesi', rep: 2, deger: [230000, 280000], sure: 14, mal: 4000, ah: 130, prog: ['cizim', 'celik'] },
   { tur: 'proje', ad: 'AVM statik projesi', rep: 4, teminat: true, deger: [3800000, 4500000], sure: 50, mal: 30000, ah: 1300, prog: ['cizim', 'beton'] },
   { tur: 'proje', ad: 'Viyadük statik projesi', rep: 5, teminat: true, deger: [9000000, 11000000], sure: 70, mal: 60000, ah: 2600, prog: ['cizim', 'beton', 'celik'] },
+  // — Mega projeler: kaba ve ince inşaat taşeronla yapılır
+  { tur: 'saha', mega: true, ad: 'Şehir hastanesi (1.200 yatak)', rep: 5, teminat: true, deger: [900000000, 1100000000], sure: 280, mal: 520000000, fazlar: [['kalipci', 150000], ['demirci', 130000], ['betoncu', 70000], ['duvarci', 110000], ['sivaci', 130000], ['seramikci', 80000], ['boyaci', 60000]] },
+  { tur: 'saha', mega: true, ad: 'Metro hattı istasyonları (8 istasyon)', rep: 5, teminat: true, deger: [1200000000, 1500000000], sure: 300, mal: 720000000, fazlar: [['kalipci', 260000], ['demirci', 230000], ['betoncu', 150000], ['duvarci', 60000], ['sivaci', 60000], ['seramikci', 50000], ['boyaci', 30000]] },
+  { tur: 'saha', mega: true, yurtdisi: true, ulke: 'Azerbaycan', ad: 'Kara yolu köprüsü (Bakü)', rep: 6, teminat: true, deger: [2000000000, 2400000000], sure: 320, mal: 1150000000, fazlar: [['kalipci', 520000], ['demirci', 470000], ['betoncu', 300000]] },
+  { tur: 'saha', mega: true, yurtdisi: true, ulke: 'Irak', ad: 'Rafineri tesis binaları (Basra)', rep: 6, teminat: true, deger: [1400000000, 1700000000], sure: 260, mal: 740000000, fazlar: [['kalipci', 220000], ['demirci', 200000], ['betoncu', 120000], ['duvarci', 120000], ['sivaci', 110000], ['seramikci', 50000], ['boyaci', 50000]] },
+  { tur: 'saha', mega: true, yurtdisi: true, ulke: 'Libya', ad: 'Konteyner limanı (Misrata)', rep: 6, teminat: true, deger: [2600000000, 3100000000], sure: 340, mal: 1500000000, fazlar: [['kalipci', 620000], ['demirci', 560000], ['betoncu', 400000]] },
+  { tur: 'saha', mega: true, yurtdisi: true, ulke: 'Katar', ad: 'Havalimanı terminali (Doha)', rep: 6, teminat: true, deger: [3000000000, 3600000000], sure: 360, mal: 1700000000, fazlar: [['kalipci', 420000], ['demirci', 380000], ['betoncu', 220000], ['duvarci', 320000], ['sivaci', 380000], ['seramikci', 260000], ['boyaci', 200000]] },
+  { tur: 'saha', mega: true, yurtdisi: true, ulke: 'Suudi Arabistan', ad: 'Stadyum ve spor kompleksi (Riyad)', rep: 6, teminat: true, deger: [4200000000, 5000000000], sure: 380, mal: 2400000000, fazlar: [['kalipci', 600000], ['demirci', 560000], ['betoncu', 330000], ['duvarci', 420000], ['sivaci', 480000], ['seramikci', 300000], ['boyaci', 260000]] },
   // Hızlı işler: 1–2 gün, panoda kısa kalır
   { tur: 'saha', hizli: true, ad: 'Su kaçağı sonrası seramik tamiri', rep: 0, deger: [9000, 12000], sure: 1, mal: 1500, fazlar: [['seramikci', 7]] },
   { tur: 'saha', hizli: true, ad: 'Duvar kırım ve yeniden örme', rep: 0, deger: [15000, 19000], sure: 2, mal: 3000, fazlar: [['duvarci', 12]] },
@@ -265,17 +274,33 @@ function jobLoad(a) { return a.tur === 'saha' && a.tas && a.faz < a.fazlar.lengt
 function overloadFactor(S) { const c = orgCapacity(S), n = S.active.reduce((s, a) => s + (a.tas ? jobLoad(a) : 1), 0) + ((S.devs || []).filter(d => d.stage === 'insaat').length); return n > c ? Math.pow(0.8, n - c) : 1; }
 function deskUsed(S) { return 1 + S.staff.filter(p => p.rol !== 'usta').length; }
 
+// Kasaya göre iş seç: kasa küçükken küçük, büyüdükçe büyük işler (kilitli işler arada hedef olarak görünür)
+function pickByCash(S, pool, lv) {
+  const target = Math.max(40000, S.money * 0.6);
+  const w = pool.map(t => {
+    const v = (t.deger[0] + t.deger[1]) / 2;
+    const d = Math.log(v / target);
+    let x = Math.exp(-(d * d) / (2 * 1.1 * 1.1));
+    if (t.rep > lv) x *= 0.3;
+    if (t.hizli) x = Math.max(x, S.money < 3000000 ? 0.35 : 0.04);
+    return x + 0.004;
+  });
+  const tot = w.reduce((a, b) => a + b, 0); let r = RNG() * tot;
+  for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0) return pool[i]; }
+  return pool[pool.length - 1];
+}
 function genJob(S, initial, forceOpen) {
   const lv = repLevel(S.rep);
   const pool = JOB_TEMPLATES.filter(t => forceOpen ? (t.rep <= lv && !(t.prog || []).some(p => !S.programs[p])) : t.rep <= lv + 1);
-  const t = pick(pool);
-  const acil = !t.hizli && RNG() < 0.25;
+  const t = pickByCash(S, pool, lv);
+  const acil = !t.hizli && !t.mega && RNG() < 0.25;
   let baz = round100(rnd(t.deger[0], t.deger[1]) * (acil ? 1.25 : 1));
   const sure = Math.max(t.hizli ? 1 : 2, Math.round(t.sure * (acil ? 0.75 : 1)));
   const job = {
     id: S.nextId++, tur: t.tur, ad: t.ad, rep: t.rep, acil, baz, sure,
     mal: round100(t.mal * rnd(0.95, 1.05)), fazlar: t.fazlar ? t.fazlar.map(f => ({ trade: f[0], ah: f[1] })) : null,
     ah: t.ah || 0, prog: t.prog || [], teminat: !!t.teminat, hizli: !!t.hizli, anahtar: !!t.anahtar, projeAh: t.projeAh || 0,
+    mega: !!t.mega, yurtdisi: !!t.yurtdisi, ulke: t.ulke || null, avansOran: t.yurtdisi ? 0.1 : 0.3, teminatOran: t.yurtdisi ? 0.1 : null, mobOran: t.yurtdisi ? 0.03 : 0,
     kalan: t.hizli ? rint(1, 2) : initial ? rint(3, 6) : rint(2, 5), musteri: pick(MUSTERI),
   };
   job.tasOffers = genTasOffers(S, job);
@@ -285,6 +310,7 @@ function jobLock(S, j) {
   if (j.rep > repLevel(S.rep)) return `İtibar: ${REP_LEVELS[j.rep].ad}`;
   const eksik = j.prog.filter(p => !S.programs[p]);
   if (eksik.length) return `${PROGRAMS[eksik[eksik.length - 1]].ad} gerekli`;
+  if (j.yurtdisi) { const m = S.staff.filter(p => p.rol === 'muhendis').length, t = S.staff.filter(p => p.rol === 'tekniker').length; if (m < 3 || t < 2) return `Yeterlik: en az 3 mühendis + 2 tekniker (sende ${m} + ${t})`; }
   return null;
 }
 function offerOf(S, j) {
@@ -292,8 +318,8 @@ function offerOf(S, j) {
   const bonus = round100(j.baz * pct);
   return { pct, bonus, teklif: j.baz + bonus };
 }
-function cezaOf(j, S) { const k = S && repLevel(S.rep) >= 3 && j.acil ? 0.75 : 1; return j.acil ? { gunluk: 0.02 * k, tavan: 0.30 * k } : { gunluk: 0.005, tavan: 0.10 }; }
-function malzemeNet(S, j) { const ind = round100(j.mal * (pazarlikLv(S) + (repLevel(S.rep) >= 1 ? 2 : 0)) * 0.01); return { brut: j.mal, ind, net: j.mal - ind }; }
+function cezaOf(j, S) { if (j.yurtdisi) return { gunluk: 0.01, tavan: 0.20 }; const k = S && repLevel(S.rep) >= 3 && j.acil ? 0.75 : 1; return j.acil ? { gunluk: 0.02 * k, tavan: 0.30 * k } : { gunluk: 0.005, tavan: 0.10 }; }
+function malzemeNet(S, j) { const pct = pazarlikLv(S) + (repLevel(S.rep) >= 1 ? 2 : 0); const ind = round100(j.mal * Math.min(pct, j.mega ? 3 : 99) * 0.01); return { brut: j.mal, ind, net: j.mal - ind }; }
 
 function ownUstas(S, trade, excludeJobId) {
   return S.staff.filter(p => p.rol === 'usta' && p.trade === trade && (!p.job || p.job === excludeJobId));
@@ -311,7 +337,8 @@ function leaderBonus(S, j) {
 const PAKET = { kaba: { ad: 'Kaba inşaat', trades: ['kalipci', 'demirci', 'betoncu', 'duvarci'] }, ince: { ad: 'İnce inşaat', trades: ['sivaci', 'seramikci', 'boyaci'] } };
 const FIRMALAR = { kaba: ['Demirtaş Kalıp', 'Öz Beton', 'Toros Yapı', 'Kuzey Yapı', 'Tekin Yapı', 'Anadolu Taahhüt', 'Çelikkaya İnşaat'], ince: ['Ege İnce İşler', 'Mavi Dekorasyon', 'Başak Yapı', 'Aksu İnşaat', 'Yıldız Yapı', 'Ekin Taahhüt', 'Lale Dekorasyon'] };
 const STAR_MOD = { 5: [0.97, 1.05], 4: [0.93, 1.05], 3: [0.88, 1.04], 2: [0.75, 1.02] };
-function tasEligible(j) { return j.tur === 'saha' && (j.rep >= 2 || j.teminat); }
+function tasEligible(j) { return j.tur === 'saha' && (j.rep >= 2 || j.teminat || j.mega); }
+let iscilik_k = 1;
 function genTasOffers(S, j) {
   if (!tasEligible(j)) return null;
   const toplamAh = j.fazlar.reduce((s, f) => s + f.ah, 0);
@@ -325,7 +352,8 @@ function genTasOffers(S, j) {
     out[k] = [5, 3 + (RNG() < 0.5 ? 1 : 0), 2].map((y, i) => {
       const fiyatK = y === 5 ? rnd(1.12, 1.28) : y === 4 ? rnd(1.0, 1.12) : y === 3 ? rnd(0.92, 1.05) : rnd(0.78, 0.9);
       const gunK = y === 5 ? rnd(0.78, 0.9) : y >= 3 ? rnd(0.86, 0.98) : rnd(0.92, 1.08);
-      return { ad: names[i], yildiz: y, fiyat: round100(iscilik * fiyatK), gun: Math.max(1, Math.round(pay * gunK)) };
+      if (j.mega && repLevel(S.rep) >= 6) iscilik_k = 0.95; else iscilik_k = 1;
+      return { ad: names[i], yildiz: y, fiyat: round100(iscilik * fiyatK * iscilik_k), gun: Math.max(1, Math.round(pay * gunK)) };
     });
   }
   return out;
@@ -399,13 +427,15 @@ function fullOffer(S, j, alloc, tasSel) {
   const brut = o.teklif - maliyet;
   const gec = Math.max(0, e.gun - j.sure);
   const ceza = Math.min(round100(o.teklif * c.gunluk) * gec, round100(o.teklif * c.tavan));
-  const teminat = j.teminat ? round100(o.teklif * (repLevel(S.rep) >= 4 ? 0.02 : 0.03)) : 0;
-  return { ...o, teminat, malzeme: m, est: e, maliyet, brut, gec, ceza, cezaGunluk: round100(o.teklif * c.gunluk), cezaTavan: round100(o.teklif * c.tavan), net: brut - ceza, itibar: -15 * gec };
+  const teminat = j.teminat ? round100(o.teklif * (j.teminatOran || (repLevel(S.rep) >= 4 ? 0.02 : 0.03))) : 0;
+  const mob = round100(o.teklif * (j.mobOran || 0));
+  const avansT = round100(o.teklif * (j.avansOran || 0.3));
+  return { ...o, teminat, mob, avansT, avansOran: j.avansOran || 0.3, malzeme: m, est: e, maliyet, brut, gec, ceza, cezaGunluk: round100(o.teklif * c.gunluk), cezaTavan: round100(o.teklif * c.tavan), net: brut - ceza - mob, itibar: -15 * gec };
 }
 // Bu iş alınırsa kasa en düşük nereye iner? (teslim ödemesi gelmeden önceki an)
 function cashCheck(S, j, f) {
   const gun = f.est.gun;
-  const avans = round100(f.teklif * 0.3);
+  const avans = f.avansT;
   const sabitGunluk = (OFFICES[S.tier].kira + S.staff.reduce((s, p) => s + p.maas, 0) + (S.kredi || 0) * KREDI_FAIZ) / DAYS_PER_MONTH;
   let diger = 0, gelecek = 0;
   S.active.forEach(a => {
@@ -414,7 +444,7 @@ function cashCheck(S, j, f) {
     if (p.saat / HOURS_PER_DAY <= gun) gelecek += a.teklif - a.avans - p.ceza + (a.teminatTutar || 0);
   });
   (S.devs || []).forEach(d => { if (d.stage !== 'satis' && d.stage !== 'bitti') { const tot = d.fazlar.reduce((s, x) => s + x.ah, 0); const kalanAh = d.fazlar.slice(d.faz).reduce((s, x) => s + x.ah, 0) - (d.stage === 'insaat' ? d.ilerleme : 0); diger += d.mal * kalanAh / tot * 0.9 + kalanAh * 3500 / HOURS_PER_DAY; } });
-  const pesin = f.malzeme.net + f.teminat - avans;
+  const pesin = f.malzeme.net + f.teminat + (f.mob || 0) - avans;
   const isGider = f.est.iscilik + sabitGunluk * gun;
   const gerekli = Math.max(0, round100(pesin + isGider + diger - gelecek));
   const enDusuk = round100(S.money - pesin - isGider - diger + gelecek);
@@ -424,10 +454,12 @@ function acceptJob(S, jobId, alloc, tasSel) {
   const j = S.board.find(x => x.id === jobId); if (!j) return 'İş bulunamadı';
   const lock = jobLock(S, j); if (lock) return lock;
   const f = fullOffer(S, j, alloc, tasSel || null);
-  if (S.money < f.malzeme.net + f.teminat) return f.teminat ? `Malzeme + teminat için kasada ${fmt(f.malzeme.net + f.teminat)} gerekli` : 'Malzeme için kasada yeterli para yok';
+  if (j.mega && (!tasSel || !tasSel.kaba || (j.tasOffers.ince && !tasSel.ince))) return 'Mega projede kaba ve ince inşaat için taşeron seçmelisin';
+  if (S.money < f.malzeme.net + f.teminat + f.mob) return f.teminat ? `Malzeme + teminat${f.mob ? ' + mobilizasyon' : ''} için kasada ${fmt(f.malzeme.net + f.teminat + f.mob)} gerekli` : 'Malzeme için kasada yeterli para yok';
   S.money -= f.malzeme.net; S.month.gider += f.malzeme.net;
   S.money -= f.teminat;
-  const avans = round100(f.teklif * 0.3);
+  if (f.mob) { S.money -= f.mob; S.month.gider += f.mob; }
+  const avans = f.avansT;
   S.money += avans; S.month.gelir += avans;
   const a = {
     ...j, teklif: f.teklif, avans, alloc: j.tur === 'saha' && alloc ? alloc.map(x => ({ ...x })) : null, team: j.tur === 'proje' ? (Array.isArray(alloc) && alloc.length ? alloc.slice() : defaultTeam(S)) : j.anahtar ? defaultTeam(S) : null, faz: 0, ilerleme: 0,
@@ -573,10 +605,11 @@ function completeJob(S, a, events) {
   const c = cezaOf(a, S);
   const gec = Math.max(0, Math.ceil((a.gecen - a.sure * HOURS_PER_DAY) / HOURS_PER_DAY - 1e-6));
   const ceza = Math.min(round100(a.teklif * c.gunluk) * gec, round100(a.teklif * c.tavan));
-  const odeme = a.teklif - a.avans - ceza;
+  let odeme = a.teklif - a.avans - ceza, kurNot = '';
+  if (a.yurtdisi) { const sp = repLevel(S.rep) >= 6 ? 0.05 : 0.1; const kur = rnd(1 - sp, 1 + sp * 1.2); const fark = round100(odeme * (kur - 1)); odeme += fark; kurNot = `, kur farkı ${fark >= 0 ? '+' : '−'}${fmt(Math.abs(fark))}`; }
   S.money += odeme; S.month.gelir += odeme;
   if (a.teminatTutar) S.money += a.teminatTutar;
-  const kazanc = Math.round(Math.min(a.rep >= 4 ? 600 : 120, Math.max(10, a.teklif / 3000)));
+  const kazanc = Math.round(Math.min(a.rep >= 5 && a.mega ? 3000 : a.rep >= 4 ? 600 : 120, Math.max(10, a.teklif / 3000)));
   const repDelta = gec ? -15 * gec : kazanc + (a.acil ? 10 : 0) + (a.anahtar ? 20 : 0);
   S.rep = Math.max(0, S.rep + (repDelta > 0 && repLevel(S.rep) >= 4 && a.rep >= 3 ? Math.round(repDelta * 1.2) : repDelta));
   S.staff.forEach(p => { if (p.job === a.id) p.job = null; });
@@ -585,7 +618,7 @@ function completeJob(S, a, events) {
   // deneyim
   const xs = a.tur === 'proje' ? ['teknik'] : ['saha', 'liderlik'];
   xs.forEach(k => { S.xp[k] = (S.xp[k] || 0) + 1; if (S.xp[k] >= 3) { S.xp[k] = 0; if (S.player[k] < 10) { S.player[k]++; events.push({ tip: 'xp', t: `Deneyim: ${STAT_AD[k]} ${S.player[k]}. seviyeye çıktı.` }); } } });
-  const msg = `${a.ad} teslim edildi. Ödeme ${fmt(odeme)}${ceza ? `, gecikme cezası −${fmt(ceza)}` : ''}${a.teminatTutar ? `, teminat ${fmt(a.teminatTutar)} iade edildi` : ''}. İtibar ${repDelta >= 0 ? '+' : ''}${repDelta}.`;
+  const msg = `${a.ad} teslim edildi. Ödeme ${fmt(odeme)}${ceza ? `, gecikme cezası −${fmt(ceza)}` : ''}${kurNot}${a.teminatTutar ? `, teminat ${fmt(a.teminatTutar)} iade edildi` : ''}. İtibar ${repDelta >= 0 ? '+' : ''}${repDelta}.`;
   log(S, msg); events.push({ tip: 'teslim', t: msg });
   checkLevel(S, events);
 }
@@ -770,8 +803,9 @@ const LEVEL_PERKS = [
   { odul: 400000, odulAd: 'Yılın yükselen firması ödülü', kalici: ['Acil işlerde gecikme cezası −%25', 'Taşerona paket verebilirsin', 'Banka kredi limiti 10 milyon TL'], acilan: ['Kurumsal Kat\'a taşınabilirsin', '4 katlı apartman arsaları', 'Anahtar teslim konut'] },
   { odul: 1000000, odulAd: 'Kamu ihale yeterlik belgesi teşviki', kalici: ['Teminat oranı %3 yerine %2', 'Biten büyük işler +%20 itibar', 'Banka kredi limiti 25 milyon TL'], acilan: ['Kamu ihaleleri (okul, hastane)', 'Site arsaları', 'Anahtar teslim fabrika'] },
   { odul: 3000000, odulAd: 'Ulusal inşaat ödülü', kalici: ['Tüm tekliflerde pazarlık +1 seviye', 'Kiralık usta yevmiyesi ek −%5', 'Banka kredi limiti 60 milyon TL'], acilan: ['AVM, viyadük, toplu konut ihaleleri', 'Rezidans kulesi arsası'] },
+  { odul: 10000000, odulAd: 'Uluslararası müteahhitlik ödülü', kalici: ['Yurtdışı işlerde kur riski yarıya iner', 'Mega projelerde taşeron fiyatları −%5', 'Banka kredi limiti 250 milyon TL'], acilan: ['Yurtdışı ihaleleri (Katar, Azerbaycan, Suudi Arabistan, Irak, Libya)', 'Milyarlık mega projeler'] },
 ];
-const KREDI_LIMIT = [500000, 1500000, 4000000, 10000000, 25000000, 60000000];
+const KREDI_LIMIT = [500000, 1500000, 4000000, 10000000, 25000000, 60000000, 250000000];
 const KREDI_FAIZ = 0.035; // aylık
 function lv(S) { return repLevel(S.rep); }
 function checkLevel(S, events) {
@@ -1092,7 +1126,7 @@ const ICON = {
 const starStr = n => `<span class="stars" aria-label="${n || 1} yıldız">${'★'.repeat(n || 1)}<span class="starOff">${'★'.repeat(5 - (n || 1))}</span></span>`;
 function xpBar(p) { const y = p.yildiz || 1; if (y >= 5) return '<span class="small muted">En üst yıldız</span>'; const a = STAR_XP[y], b = STAR_XP[y + 1], pct = Math.min(100, ((p.xp || 0) - a) / (b - a) * 100); return `<div class="prow small"><span class="muted">Tecrübe</span><div class="bar"><i style="width:${pct}%"></i></div><span>${Math.round(p.xp || 0)}/${b} saat</span></div>`; }
 const chip = (t, c) => `<span class="chip ${c}">${t}</span>`;
-const turChip = j => (j.firsat ? chip('FIRSAT', 'purple') : '') + (j.anahtar ? chip('ANAHTAR TESLİM', 'teal') : j.tur === 'proje' ? chip('PROJE', 'blue') : chip('SAHA', 'amber')) + (j.hizli ? chip('Hızlı', 'green') : j.acil ? chip('Acil', 'orange') : chip('Normal', 'gray'));
+const turChip = j => (j.yurtdisi ? chip('YURTDIŞI · ' + j.ulke, 'red') : '') + (j.mega ? chip('MEGA', 'dark') : '') + (j.firsat ? chip('FIRSAT', 'purple') : '') + (j.anahtar ? chip('ANAHTAR TESLİM', 'teal') : j.tur === 'proje' ? chip('PROJE', 'blue') : chip('SAHA', 'amber')) + (j.hizli ? chip('Hızlı', 'green') : j.acil ? chip('Acil', 'orange') : chip('Normal', 'gray'));
 
 // ---------- Başlangıç
 function renderStart() {
@@ -1377,15 +1411,16 @@ function sheetBody() {
 }
 function boardBody() {
   const f = sheetState.f || 'all';
-  const filters = [['all', 'Tümü'], ['ok', 'Alınabilir'], ['hizli', 'Hızlı'], ['anahtar', 'Anahtar teslim'], ['proje', 'Proje'], ['saha', 'Saha'], ['acil', 'Acil']];
+  const filters = [['all', 'Tümü'], ['ok', 'Alınabilir'], ['hizli', 'Hızlı'], ['anahtar', 'Anahtar teslim'], ['mega', 'Mega / Yurtdışı'], ['proje', 'Proje'], ['saha', 'Saha'], ['acil', 'Acil']];
   let list = S.board.slice();
   if (f === 'proje' || f === 'saha') list = list.filter(j => j.tur === f);
   if (f === 'acil') list = list.filter(j => j.acil);
   if (f === 'hizli') list = list.filter(j => j.hizli);
   if (f === 'anahtar') list = list.filter(j => j.anahtar);
+  if (f === 'mega') list = list.filter(j => j.mega || j.yurtdisi);
   if (f === 'ok') list = list.filter(j => !jobLock(S, j));
   list.sort((a, b) => (!!jobLock(S, a)) - (!!jobLock(S, b)) || (!!b.firsat) - (!!a.firsat) || (!!b.hizli) - (!!a.hizli));
-  return `<p class="small muted">Teklifler pazarlık seviyene göre yükseltilmiş gelir (Sv. ${pazarlikLv(S)}). Aktif iş: ${S.active.length}/${orgCapacity(S)}.</p>
+  return `<p class="small muted">İşler kasana göre gelir: kasa büyüdükçe büyük işler, azaldıkça küçük işler çoğalır. Teklifler pazarlık seviyene göre yükseltilmiş gelir (Sv. ${pazarlikLv(S)}). Aktif iş: ${S.active.length}/${orgCapacity(S)}.</p>
   <div class="filters">${filters.map(([k, t]) => `<button class="pill ${k === f ? 'on' : ''}" data-f="${k}">${t}</button>`).join('')}</div>
   ${list.length ? list.map(j => {
     const lock = jobLock(S, j), o = offerOf(S, j);
@@ -1402,7 +1437,7 @@ function jobBody() {
   const j = S.board.find(x => x.id === sheetState.id); if (!j) return '<div class="empty">Bu iş artık panoda değil.</div>';
   const lock = jobLock(S, j);
   if (j.tur === 'saha' && !sheetState.alloc) sheetState.alloc = autoAlloc(S, j);
-  if (!sheetState.tas) sheetState.tas = { kaba: null, ince: null };
+  if (!sheetState.tas) sheetState.tas = j.mega ? { kaba: 1, ince: j.tasOffers && j.tasOffers.ince ? 1 : null } : { kaba: null, ince: null };
   if (j.tur === 'proje' && !sheetState.team) sheetState.team = defaultTeam(S);
   const f = fullOffer(S, j, j.tur === 'proje' ? sheetState.team : sheetState.alloc, j.tasOffers ? { kaba: sheetState.tas.kaba != null ? j.tasOffers.kaba[sheetState.tas.kaba] : null, ince: sheetState.tas.ince != null && j.tasOffers.ince ? j.tasOffers.ince[sheetState.tas.ince] : null } : null);
   let work = '';
@@ -1411,7 +1446,7 @@ function jobBody() {
       const own = fullOffer(S, j, sheetState.alloc, { ...curTas(j), [k]: null });
       j._tasSel = curTas(j);
       return `<div class="tasbox"><b>${PAKET[k].ad}</b> <span class="small muted">(${PAKET[k].trades.filter(t => j.fazlar.some(f => f.trade === t)).map(t => TRADES[t].ad).join(', ')})</span>
-      <button class="tasopt ${sheetState.tas[k] == null ? 'on' : ''}" data-tas="${k}:-1"><span><b>Kendi ekibimle</b><span class="small muted">Kiralık + kendi ustaların, sen yönetirsin</span></span></button>
+      ${j.mega ? '<span class="small muted">Mega projede bu paket taşeronla yapılmak zorunda.</span>' : `<button class="tasopt ${sheetState.tas[k] == null ? 'on' : ''}" data-tas="${k}:-1"><span><b>Kendi ekibimle</b><span class="small muted">Kiralık + kendi ustaların, sen yönetirsin</span></span></button>`}
       ${offers.map((o, i) => `<button class="tasopt ${sheetState.tas[k] === i ? 'on' : ''}" data-tas="${k}:${i}"><span><b>${esc(o.ad)}</b> <span class="stars" aria-label="${o.yildiz} yıldız">${'★'.repeat(o.yildiz)}${'☆'.repeat(5 - o.yildiz)}</span><span class="small muted">${o.yildiz >= 5 ? 'Sözünü tutar, pahalı' : o.yildiz >= 4 ? 'Güvenilir' : o.yildiz >= 3 ? 'Orta, ara sıra aksar' : 'Ucuz ama sık aksar, gecikme riski yüksek'}</span></span><span class="r"><b>${fmt(o.fiyat)}</b><span class="small muted">${o.gun} gün</span></span></button>`).join('')}</div>`;
     }).join('') : '';
     work = (j.tasOffers ? `<h3>Taşeron teklifleri · 3 firma</h3><p class="small muted">Paketi taşerona verirsen işçiliği firma yapar (malzeme senden). Taşerondaki iş, kapasitenin yalnızca üçte birini kullanır.</p>${tasSec}` : '') + `<h3>İşçilik · otomatik dağıtıldı</h3><p class="small muted">Boştaki kendi ustaların sıraları gelince önce kiralıkların yerini alır; fazlası da ekibe katılıp işi hızlandırır (ek yevmiye yok).</p><div class="workers">${j.fazlar.map((fz, i) => {
@@ -1432,6 +1467,7 @@ function jobBody() {
   }
   const anahtarHtml = j.anahtar ? `<h3>1. Aşama · Proje</h3><div class="kv"><span>Gereken çizim</span><b>${j.projeAh} saat</b><span>Çizecek</span><b>${esc(teamNames(S, defaultTeam(S)))}${S.staff.some(p => p.rol === 'muhendis') ? ' (iş ekranından ekip büyütülebilir)' : ''}</b><span>Programlar</span><b>${j.prog.map(p => PROGRAMS[p].ad).join(', ')}</b></div><p class="small muted">Proje bitince inşaat kendiliğinden başlar. Tek süre, tek teklif: proje gecikirse inşaata kalan süre kısalır.</p><h3>2. Aşama · İnşaat</h3>` : '';
   return `<div class="jrow">${turChip(j)}<span class="small muted">Müşteri: ${esc(j.musteri)}</span></div><h2 class="big">${esc(j.ad)}</h2>
+  ${j.yurtdisi ? `<div class="cashbox bad"><b>Ağır şartlar · ${esc(j.ulke)}</b><div class="kv small"><span>Avans</span><b>%10 (yurtiçinde %30)</b><span>Teminat mektubu</span><b>%10</b><span>Mobilizasyon gideri (peşin)</span><b>%3</b><span>Gecikme cezası</span><b>günlük %1, tavan %20</b><span>Kur riski (teslim ödemesinde)</span><b>±%${repLevel(S.rep) >= 6 ? 5 : 10}</b><span>Yeterlik</span><b>3 mühendis + 2 tekniker</b></div></div>` : ''}${j.mega && !j.yurtdisi ? '<p class="small muted"><b>Mega proje:</b> kaba ve ince inşaat taşeronla yapılır.</p>' : ''}
   ${j.firsat ? '<p class="pos small"><b>Sürpriz fırsat:</b> bedeli normalin çok üstünde, panoda kısa süre kalır.</p>' : ''}${j.hizli ? '<p class="small muted">Hızlı iş: 1–2 günde biter, panoda kısa kalır.</p>' : ''}${anahtarHtml}
   ${lock ? `<p class="warn">${ICON.lock} ${esc(lock)}</p>` : ''}
   ${work}
@@ -1443,11 +1479,12 @@ function jobBody() {
     ${f.gec ? `<span class="warn">Gecikme cezası (günlük ${fmt(f.cezaGunluk)})</span><b class="warn">−${fmt(f.ceza)}</b><span class="warn">İtibar etkisi</span><b class="warn">${f.itibar} puan</b>` : `<span>Gecikme cezası</span><b>Yok</b>`}</div>
     <div class="netbox"><span>Beklenen net kâr</span><b>${fmt(f.net)}</b></div>
     ${(() => { const c = cashCheck(S, j, f); return `<div class="cashbox ${c.enDusuk < 0 ? 'bad' : ''}"><div class="jrow"><b>Kasa kontrolü</b><b>${c.enDusuk < 0 ? 'Kasa yetmiyor' : 'Kasa yeterli'}</b></div>
-      <div class="kv small"><span>Peşin: malzeme${f.teminat ? ' + teminat' : ''} − %30 avans</span><b>${fmt(c.pesin)}</b><span>Bu işin işçiliği (iş boyunca)</span><b>${fmt(f.est.iscilik)}</b><span>Kira, maaş${S.kredi ? ', faiz' : ''} (${c.gun} gün)</span><b>${fmt(c.sabit)}</b>${c.diger ? `<span>Diğer işlerin kalan giderleri</span><b>${fmt(c.diger)}</b>` : ''}${c.gelecek ? `<span class="pos">Bu sürede bitecek işlerden gelecek</span><b class="pos">+${fmt(c.gelecek)}</b>` : ''}
+      <div class="kv small"><span>Peşin: malzeme${f.teminat ? ' + teminat' : ''}${f.mob ? ' + mobilizasyon' : ''} − %${Math.round(f.avansOran * 100)} avans</span><b>${fmt(c.pesin)}</b><span>Bu işin işçiliği (iş boyunca)</span><b>${fmt(f.est.iscilik)}</b><span>Kira, maaş${S.kredi ? ', faiz' : ''} (${c.gun} gün)</span><b>${fmt(c.sabit)}</b>${c.diger ? `<span>Diğer işlerin kalan giderleri</span><b>${fmt(c.diger)}</b>` : ''}${c.gelecek ? `<span class="pos">Bu sürede bitecek işlerden gelecek</span><b class="pos">+${fmt(c.gelecek)}</b>` : ''}
       <span><b>Gereken asgari kasa</b></span><b>${fmt(c.gerekli)}</b><span><b>İş boyunca kasan en düşük</b></span><b class="${c.enDusuk < 0 ? 'neg' : 'pos'}">${fmt(c.enDusuk)}</b></div>
       ${c.enDusuk < 0 ? `<span class="small neg">Bu işi alırsan kasa teslimden önce eksiye düşer. Ek ${fmt(-c.enDusuk)} bulman gerekir (kredi, ön satış, önce başka bir işi bitirmek).</span>` : '<span class="small muted">Teslim ödemesi gelmeden önceki en sıkışık an hesaplandı.</span>'}</div>`; })()}
-    ${f.teminat ? `<p class="small"><b>Teminat mektubu:</b> ${fmt(f.teminat)} (teklifin %3'ü) iş bitene kadar bağlı kalır, teslimde iade edilir. Kabul için kasada malzeme + teminat = ${fmt(f.malzeme.net + f.teminat)} gerekir.</p>` : ''}
-    <p class="small muted">Ceza tavanı: ${fmt(f.cezaTavan)} · Kabulde %30 avans (${fmt(round100(f.teklif * 0.3))}) gelir, malzeme peşin ödenir.</p>
+    ${f.mob ? `<p class="small"><b>Mobilizasyon:</b> ${fmt(f.mob)} peşin (net kâra dahil edildi).</p>` : ''}
+    ${f.teminat ? `<p class="small"><b>Teminat mektubu:</b> ${fmt(f.teminat)} (teklifin %${Math.round(f.teminat / f.teklif * 100)}'i) iş bitene kadar bağlı kalır, teslimde iade edilir. Kabul için kasada malzeme + teminat = ${fmt(f.malzeme.net + f.teminat)} gerekir.</p>` : ''}
+    <p class="small muted">Ceza tavanı: ${fmt(f.cezaTavan)} · Kabulde %${Math.round(f.avansOran * 100)} avans (${fmt(f.avansT)}) gelir, malzeme peşin ödenir.</p>
   </div>
   ${S.active.length >= orgCapacity(S) ? `<p class="warn">Kapasite dolu (${S.active.length}/${orgCapacity(S)}). Bu işi alırsan tüm işler %20 yavaşlar.</p>` : ''}
   <div class="actions"><button class="secondary" id="pass">Pas geç</button><button class="primary" id="accept" ${lock ? 'disabled' : ''}>Teklifi kabul et</button></div>`;
