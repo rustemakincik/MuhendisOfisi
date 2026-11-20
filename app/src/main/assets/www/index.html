@@ -708,18 +708,37 @@ const PARCELS = [
     fazlar: [['kalipci', 1400], ['demirci', 1180], ['betoncu', 650], ['duvarci', 1400], ['sivaci', 1720], ['seramikci', 1020], ['boyaci', 860]] },
   { ad: 'Rezidans kulesi arsası', rep: 5, daire: 60, alan: 3000, kat: 20, arsa: [42000000, 50000000], unit: [2700000, 3100000], mal: 62000000, projeAh: 600, disProje: 3500000, harc: 1500000,
     fazlar: [['kalipci', 3700], ['demirci', 3240], ['betoncu', 1850], ['duvarci', 3240], ['sivaci', 3930], ['seramikci', 2540], ['boyaci', 2080]] },
+  { ad: 'Lüks villa sitesi (30 villa)', rep: 5, daire: 30, alan: 24000, kat: 2, arsa: [120000000, 145000000], unit: [21000000, 25000000], mal: 255000000, projeAh: 700, disProje: 9000000, harc: 4000000,
+    fazlar: [['kalipci', 3100], ['demirci', 2700], ['betoncu', 1600], ['duvarci', 2700], ['sivaci', 3400], ['seramikci', 1600], ['boyaci', 1100]] },
+  { ad: 'Ofis gökdeleni (45 kat, 180 ofis)', rep: 6, daire: 180, birim: 'ofis', alan: 6000, kat: 45, arsa: [420000000, 480000000], unit: [12500000, 15000000], mal: 980000000, projeAh: 1600, disProje: 90000000, harc: 40000000,
+    fazlar: [['kalipci', 7900], ['demirci', 6800], ['betoncu', 4100], ['duvarci', 6800], ['sivaci', 8500], ['seramikci', 4100], ['boyaci', 2700]] },
+  { ad: 'Karma proje: AVM + 2 rezidans kulesi', rep: 6, daire: 320, alan: 18000, kat: 32, arsa: [480000000, 560000000], unit: [7800000, 9200000], mal: 1080000000, projeAh: 2000, disProje: 110000000, harc: 50000000,
+    fazlar: [['kalipci', 8000], ['demirci', 7000], ['betoncu', 4200], ['duvarci', 7000], ['sivaci', 8800], ['seramikci', 4200], ['boyaci', 2800]] },
+  { ad: 'Dubai rezidans (yurtdışı)', rep: 6, yurtdisi: true, daire: 150, alan: 4500, kat: 38, arsa: [850000000, 980000000], unit: [27000000, 33000000], mal: 1750000000, projeAh: 1800, disProje: 150000000, harc: 70000000,
+    fazlar: [['kalipci', 7900], ['demirci', 6900], ['betoncu', 4100], ['duvarci', 6900], ['sivaci', 8600], ['seramikci', 4100], ['boyaci', 2700]] },
 ];
 const KABA_FAZ = 3; // ilk 3 faz kaba inşaat
 function genParcel(S, i) {
   const lv = repLevel(S.rep);
   const t = PARCELS[Math.min(i, PARCELS.length - 1)];
   return {
-    id: S.nextId++, ad: t.ad, rep: t.rep, daire: t.daire, alan: t.alan, kat: t.kat, semt: pick(MUSTERI),
+    id: S.nextId++, ad: t.ad, rep: t.rep, daire: t.daire, alan: t.alan, kat: t.kat, semt: t.yurtdisi ? 'Dubai Marina' : pick(MUSTERI),
     arsa: round100(rnd(t.arsa[0], t.arsa[1])), unit: round100(rnd(t.unit[0], t.unit[1])), mal: t.mal,
     projeAh: t.projeAh, disProje: t.disProje, harc: t.harc, fazlar: t.fazlar.map(f => ({ trade: f[0], ah: f[1] })),
+    birim: t.birim || 'daire', yurtdisi: !!t.yurtdisi, semt2: t.yurtdisi ? 'Dubai' : null,
   };
 }
-function refreshLand(S) { S.land = PARCELS.map((_, i) => genParcel(S, i)); }
+// İlanlar: mevkine açık olanlardan kasana en uygun 3 arsa + bir üst seviyeden 1 hedef arsa
+function refreshLand(S) {
+  const lv = repLevel(S.rep);
+  const acik = PARCELS.map((t, i) => ({ t, i })).filter(x => x.t.rep <= lv);
+  const ust = PARCELS.map((t, i) => ({ t, i })).filter(x => x.t.rep === Math.min(6, lv + 1) && x.t.rep > lv);
+  const fit = x => { const a = (x.t.arsa[0] + x.t.arsa[1]) / 2; return Math.abs(Math.log(Math.max(a, 1) / Math.max(S.money * 0.35, 1e6))); };
+  const sec = acik.sort((a, b) => fit(a) - fit(b)).slice(0, ust.length ? 3 : 4);
+  if (ust.length) sec.push(ust[Math.floor(RNG() * ust.length)]);
+  if (!sec.length) sec.push(...PARCELS.map((t, i) => ({ t, i })).filter(x => x.t.rep <= DEV_UNLOCK).slice(0, 2));
+  S.land = sec.sort((a, b) => a.i - b.i).map(x => genParcel(S, x.i));
+}
 function devEnsure(S) { if (!S.devs) S.devs = []; if (!S.land) refreshLand(S); if (!S.market) S.market = 1; }
 function devCostEstimate(S, p, tempo) {
   const t = tempo || 4;
@@ -740,7 +759,7 @@ function buyParcel(S, id) {
   S.money -= p.arsa; S.month.gider += p.arsa;
   const own = S.programs.cizim && S.programs.beton;
   const d = { ...p, stage: 'proje', ownProje: own, projeIlerleme: 0, projeKalan: own ? 0 : 10 * HOURS_PER_DAY, ruhsatKalan: 8 * HOURS_PER_DAY,
-    faz: 0, ilerleme: 0, tempo: 4, sold: 0, presold: 0, priceSet: 0, gelir: 0, gider: p.arsa, malOdendi: [], lider: null };
+    faz: 0, ilerleme: 0, tempo: p.daire >= 100 ? 30 : p.daire >= 20 ? 15 : 4, sold: 0, presold: 0, priceSet: 0, gelir: 0, gider: p.arsa, malOdendi: [], lider: null };
   if (!own) { S.money -= p.disProje; S.month.gider += p.disProje; d.gider += p.disProje; }
   S.land = S.land.filter(x => x !== p);
   S.devs.push(d);
@@ -805,16 +824,17 @@ function devDayEnd(S, events) {
     const kalan = d.daire - d.sold - d.presold;
     const pf = d.priceSet <= -0.1 ? 2.0 : d.priceSet < 0 ? 1.4 : d.priceSet === 0 ? 1 : d.priceSet <= 0.05 ? 0.7 : 0.45;
     let satilan = 0;
-    for (let k = 0; k < kalan; k++) if (RNG() < 0.12 * pf * S.market) satilan++;
+    const olcek = Math.min(1, Math.sqrt(8 / d.daire));
+    for (let k = 0; k < kalan; k++) if (RNG() < 0.12 * pf * S.market * olcek) satilan++;
     if (satilan) {
-      const fiyat = devUnitPrice(S, d) * satilan;
+      const fiyat = round100(devUnitPrice(S, d) * satilan * (d.yurtdisi ? rnd(0.93, 1.08) : 1));
       d.sold += satilan; d.gelir += fiyat; S.money += fiyat; S.month.gelir += fiyat;
       events.push({ tip: 'satis', t: `${d.ad}: ${satilan} daire satıldı (${fmt(fiyat)}).`, soft: true });
     }
     if (d.sold + d.presold >= d.daire) {
       d.stage = 'bitti';
       const kar = d.gelir - d.gider;
-      S.rep += 150 + 10 * d.daire; checkLevel(S, events);
+      S.rep += Math.min(4000, 150 + 10 * d.daire); checkLevel(S, events);
       events.push({ tip: 'yap', t: `${d.ad} tamamen satıldı. Toplam kâr ${fmt(kar)}. İtibar +${150 + 10 * d.daire}.` });
       log(S, `${d.ad} projesi kapandı: kâr ${fmt(kar)}.`);
     }
@@ -1559,23 +1579,24 @@ function landBody() {
       if (d.stage === 'insaat') {
         body += `<div class="tradelist">${d.fazlar.map((f, i) => { const pct = i < d.faz ? 100 : i === d.faz ? Math.min(100, d.ilerleme / f.ah * 100) : 0; return `<div class="trade"><span>${TRADES[f.trade].ad}</span><div class="bar"><i class="${i < d.faz ? 'green' : ''}" style="width:${pct}%"></i></div><span class="st">${i < d.faz ? 'Bitti' : i === d.faz ? '%' + Math.floor(pct) : 'Sırada'}</span></div>`; }).join('')}</div>
         <div class="small"><b>Tempo</b> · her işte kaç kiralık usta çalışsın (kalabalık ekip daha hızlı ama usta başı verim düşer)</div>
-        <div class="filters">${[[2, 'Yavaş · 2'], [4, 'Normal · 4'], [6, 'Hızlı · 6'], [8, 'Çok hızlı · 8'], [15, 'Büyük ekip · 15'], [30, 'Dev ekip · 30']].map(([t, n]) => `<button class="pill ${d.tempo === t ? 'on' : ''}" data-tempo="${d.id}:${t}">${n}</button>`).join('')}</div>
+        <div class="filters">${(d.daire >= 100 ? [[8, 'Yavaş · 8'], [15, 'Normal · 15'], [30, 'Dev ekip · 30'], [60, 'Mega ekip · 60']] : d.daire >= 20 ? [[4, 'Yavaş · 4'], [8, 'Normal · 8'], [15, 'Büyük ekip · 15'], [30, 'Dev ekip · 30']] : [[2, 'Yavaş · 2'], [4, 'Normal · 4'], [6, 'Hızlı · 6'], [8, 'Çok hızlı · 8']]).map(([t, n]) => `<button class="pill ${d.tempo === t ? 'on' : ''}" data-tempo="${d.id}:${t}">${n}</button>`).join('')}</div>
         ${d.faz >= KABA_FAZ && d.sold + d.presold < d.daire ? `<button class="secondary small" data-presell="${d.id}">1 daireyi ön satışla sat · ${fmt(round100(d.unit * S.market * 0.85))}</button>` : `<div class="small muted">Ön satış kaba inşaat bitince açılır (%15 indirimli, nakit sıkışmasına karşı).</div>`}`;
       }
       if (d.stage === 'satis') {
-        body += `<div class="kv"><span>Daire fiyatı</span><b>${fmt(fiyat)}</b><span>Satılan</span><b>${d.sold} + ${d.presold} ön satış / ${d.daire}</b></div>
+        body += `<div class="kv"><span>Daire fiyatı</span><b>${fmt(fiyat)}</b><span>Satılan</span><b>${d.sold} + ${d.presold} ön satış / ${d.daire} ${d.birim || 'daire'}</b></div>
         <div class="small"><b>Fiyat</b> · ucuz satarsan hızlı gider, pahalı satarsan bekletir</div>
         <div class="filters">${[[-0.1, '−%10'], [-0.05, '−%5'], [0, 'Piyasa'], [0.05, '+%5'], [0.1, '+%10']].map(([p, n]) => `<button class="pill ${Math.abs(d.priceSet - p) < 1e-6 ? 'on' : ''}" data-price="${d.id}:${p}">${n}</button>`).join('')}</div>`;
       }
-      return `<div class="card"><div class="jrow">${chip('YAP-SAT', 'green')}<b>${d.daire} daire · ${d.kat} kat</b></div><div class="jname">${esc(d.ad)} · ${esc(d.semt)}</div>${body}
+      return `<div class="card"><div class="jrow">${chip('YAP-SAT', 'green')}${d.yurtdisi ? chip('YURTDIŞI', 'red') : ''}<b>${d.daire} ${d.birim || 'daire'} · ${d.kat} kat</b></div><div class="jname">${esc(d.ad)} · ${esc(d.semt)}</div>${body}
       <div class="kv"><span>Harcanan</span><b>${fmt(d.gider)}</b><span>Satış geliri</span><b class="pos">${fmt(d.gelir)}</b>${d.tasarruf > 0 ? `<span>Kendi ustalarınla tasarruf</span><b class="pos">${fmt(d.tasarruf)}</b>` : ''}<span>Şu anki durum</span><b class="${d.gelir - d.gider >= 0 ? 'pos' : 'neg'}">${fmt(d.gelir - d.gider)}</b></div></div>`;
     }).join('');
   }
   h += `<h3>Arsa ilanları</h3>` + S.land.map(p => {
-    const e = devCostEstimate(S, p, 4), okRep = lv >= p.rep, okMoney = S.money >= p.arsa;
+    const tp = p.daire >= 100 ? 30 : p.daire >= 20 ? 15 : 4;
+    const e = devCostEstimate(S, p, tp), okRep = lv >= p.rep, okMoney = S.money >= p.arsa;
     return `<div class="card ${okRep ? '' : 'lockedcard'}"><div class="jrow"><b>${esc(p.ad)}</b><b>${fmt(p.arsa)}</b></div>
-    <div class="small muted">${esc(p.semt)} · ${p.alan} m² · imar ${p.kat} kat · ${p.daire} daire · daire başı ~${fmt(p.unit * S.market)}</div>
-    <div class="kv"><span>Arsa</span><b>${fmt(p.arsa)}</b><span>Proje ${e.ownProje ? '(sen çizersin, ' + p.projeAh + ' saat)' : '(dışarıya)'}</span><b>${e.ownProje ? '0 TL' : fmt(p.disProje)}</b><span>Ruhsat harcı</span><b>${fmt(p.harc)}</b><span>Malzeme (aşama aşama ödenir)</span><b>${fmt(p.mal)}</b><span>İşçilik (normal tempo)</span><b>${fmt(e.labor)}</b>
+    ${p.yurtdisi ? chip('YURTDIŞI · satışlarda kur riski ±%7', 'red') : ''}<div class="small muted">${esc(p.semt)} · ${p.alan.toLocaleString('tr-TR')} m² · ${p.kat} kat · ${p.daire} ${p.birim || 'daire'} · ${p.birim || 'daire'} başı ~${fmt(p.unit * S.market)}</div>
+    <div class="kv"><span>Arsa</span><b>${fmt(p.arsa)}</b><span>Proje ${e.ownProje ? '(sen çizersin, ' + p.projeAh + ' saat)' : '(dışarıya)'}</span><b>${e.ownProje ? '0 TL' : fmt(p.disProje)}</b><span>Ruhsat harcı</span><b>${fmt(p.harc)}</b><span>Malzeme (aşama aşama ödenir)</span><b>${fmt(p.mal)}</b><span>İşçilik (${tp} kişilik tempo)</span><b>${fmt(e.labor)}</b>
     <span><b>Toplam maliyet</b></span><b>${fmt(e.maliyet)}</b><span><b>Tahmini satış</b></span><b>${fmt(e.gelir)}</b></div>
     <div class="netbox"><span>Tahmini kâr</span><b>${fmt(e.kar)}</b></div>
     <div class="small muted">Süre: proje ${e.ownProje ? '~' + Math.max(1, Math.ceil(p.projeAh / (teamSpeed(S, { prog: ['cizim', 'beton'] }, ['player'].concat(S.staff.filter(x => x.rol === 'muhendis').map(x => x.id))) || 0.8) / HOURS_PER_DAY)) + (S.staff.some(x => x.rol === 'muhendis') ? ' (sen + boştaki mühendisler)' : '') : 10} gün + ruhsat 8 gün + inşaat ~${e.insaatGun} gün + satış. Sermaye bu sürede bağlı kalır.</div>
